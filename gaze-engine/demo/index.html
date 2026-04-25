@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Catalyst for Care — AAC</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div id="app">
+
+    <!-- ── Landing ─────────────────────────────────────────────────── -->
+    <section id="screen-landing" class="screen active">
+      <div class="landing-content">
+        <div class="logo">👁 Catalyst for Care</div>
+        <h1>Gaze-Powered AAC</h1>
+        <p>Look at a word tile for 1.2 seconds to select it.<br>Words update automatically to suggest what comes next.</p>
+        <button class="mode-card" id="btn-webcam">
+          <div class="mode-icon">📷</div>
+          <div class="mode-title">Start with Webcam</div>
+          <div class="mode-desc">Calibrate once with 9 dots, then communicate by looking</div>
+        </button>
+      </div>
+    </section>
+
+    <!-- ── Calibration ────────────────────────────────────────────── -->
+    <section id="screen-calibration" class="screen">
+      <div class="calib-header">
+        <h2>Calibration</h2>
+        <p id="calib-instruction">Loading…</p>
+        <div class="calib-counter">Point <span id="calib-n">1</span> / 9</div>
+        <div id="calib-progress" class="calib-progress">Click the dot, then hold still</div>
+      </div>
+      <div id="calib-surface"></div>
+      <button class="ghost-btn" id="btn-skip-calib">Skip calibration →</button>
+    </section>
+
+    <!-- ── AAC Board ──────────────────────────────────────────────── -->
+    <section id="screen-board" class="screen">
+      <header id="board-header">
+        <button class="ghost-btn" id="btn-back">← Back</button>
+        <div id="text-display">
+          <span id="text-content" class="placeholder">Look at a word to begin…</span>
+        </div>
+        <button class="ghost-btn" id="btn-recalibrate">Recalibrate</button>
+        <div id="mode-badge">👁 Webcam</div>
+      </header>
+
+      <!-- 4 word tiles + 2 controls in a 2×3 grid -->
+      <main id="word-grid">
+        <!-- Injected by JS -->
+      </main>
+    </section>
+
+  </div>
+
+  <div id="gaze-cursor"></div>
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>
