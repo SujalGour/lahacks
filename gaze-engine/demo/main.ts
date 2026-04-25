@@ -2,87 +2,68 @@ import { GazeEngine, buildCalibrationProfile } from '@catalyst/gaze-engine';
 import type { GazeSource, GazeCallback, CalibrationSample, CalibrationProfile } from '@catalyst/gaze-engine';
 import { MediaPipeGazeSource } from './mediapipe-source';
 
-// ── Letter & control tile definitions ─────────────────────────────────────────
+// ── Next-word transition table ────────────────────────────────────────────────
+// Key = last 1–2 words of composed text (uppercase). Value = 4 suggestions.
+// Lookup: try 2-word key first, then 1-word key, then '' (sentence start).
 
-// Frequency-ordered alphabet (ETAOIN…)
-const LETTERS = ['E','T','A','O','I','N','S','R','H','L','D','C','U','M','F','P','G','W','Y','B','V','K','X','J','Q','Z'];
+const TRANSITIONS: Record<string, string[]> = {
+  '':           ['I',        'PLEASE',    'HELP',      'YES'       ],
+  'I':          ['WANT',     'NEED',      'FEEL',      'AM'        ],
+  'I WANT':     ['WATER',    'FOOD',      'MEDICINE',  'BATHROOM'  ],
+  'WANT':       ['WATER',    'FOOD',      'MEDICINE',  'HELP'      ],
+  'I NEED':     ['HELP',     'WATER',     'MEDICINE',  'DOCTOR'    ],
+  'NEED':       ['HELP',     'WATER',     'MEDICINE',  'BATHROOM'  ],
+  'I FEEL':     ['PAIN',     'TIRED',     'COLD',      'HOT'       ],
+  'FEEL':       ['PAIN',     'TIRED',     'COLD',      'BETTER'    ],
+  'I AM':       ['IN PAIN',  'TIRED',     'COLD',      'OKAY'      ],
+  'AM':         ['IN PAIN',  'TIRED',     'OKAY',      'UNCOMFORTABLE'],
+  'PLEASE':     ['HELP',     'CALL',      'STOP',      'COME'      ],
+  'PLEASE CALL':['DOCTOR',   'NURSE',     'FAMILY',    'EMERGENCY' ],
+  'CALL':       ['DOCTOR',   'NURSE',     'FAMILY',    'EMERGENCY' ],
+  'HELP':       ['ME',       'NOW',       'PLEASE',    'DOCTOR'    ],
+  'YES':        ['PLEASE',   'MORE',      'THAT',      'THANK YOU' ],
+  'NO':         ['THANK YOU','MORE',      'STOP',      'PLEASE'    ],
+  'THANK YOU':  ['SO MUCH',  'FOR EVERYTHING', 'VERY MUCH', 'ALL'  ],
+  'PAIN':       ['HERE',     'CHEST',     'BACK',      'HEAD'      ],
+  'IN PAIN':    ['HERE',     'CHEST',     'PLEASE HELP','MEDICINE' ],
+  'MORE':       ['WATER',    'FOOD',      'MEDICINE',  'AIR'       ],
+  'CANNOT':     ['BREATHE',  'MOVE',      'SLEEP',     'EAT'       ],
+  'WATER':      ['PLEASE',   'NOW',       'MORE',      'THANK YOU' ],
+  'FOOD':       ['PLEASE',   'MORE',      'WARM',      'THANK YOU' ],
+  'MEDICINE':   ['PLEASE',   'NOW',       'MORE',      'THANK YOU' ],
+  'DOCTOR':     ['PLEASE',   'NOW',       'COME',      'HELP'      ],
+  'NURSE':      ['PLEASE',   'NOW',       'COME',      'HELP'      ],
+  'TIRED':      ['VERY',     'PLEASE',    'SLEEP',     'REST'      ],
+  'COLD':       ['BLANKET',  'PLEASE',    'VERY',      'HELP'      ],
+  'HOT':        ['WATER',    'FAN',       'PLEASE',    'HELP'      ],
+  'BATHROOM':   ['PLEASE',   'NOW',       'HELP',      'URGENT'    ],
+  'OKAY':       ['THANK YOU','GOOD',      'YES',       'BETTER'    ],
+  'STOP':       ['PLEASE',   'NOW',       'THAT',      'PAIN'      ],
+};
 
-const CONTROLS = [
-  { id: 'SPACE',  label: 'SPACE'  },
-  { id: 'DELETE', label: '⌫ DEL' },
-  { id: 'CLEAR',  label: 'CLEAR'  },
-  { id: 'SEND',   label: 'SEND ▶' },
-];
+const DEFAULT_WORDS = TRANSITIONS[''];
 
-// ── ALS-focused word list for prefix prediction ───────────────────────────────
+function getNextWords(text: string): string[] {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  if (words.length >= 2) {
+    const key2 = words.slice(-2).join(' ');
+    if (TRANSITIONS[key2]) return TRANSITIONS[key2];
+  }
+  if (words.length >= 1) {
+    const key1 = words[words.length - 1];
+    if (TRANSITIONS[key1]) return TRANSITIONS[key1];
+  }
+  return DEFAULT_WORDS;
+}
 
-const WORD_LIST: string[] = [
-  'i','im','ill','in','is','it',
-  'you','your','yes',
-  'no','not','now','need','needs','needed','nurse','nauseous',
-  'want','wanted','wants','water','was','will','would','where','when','who','why','we','with','well','warm',
-  'am','are','again','always','aching',
-  'pain','painful','please','pill','pills','phone','position',
-  'help','helps','hot','hungry','hurt','hurts','home','hospital','her','him','he','has','have','had','here','how',
-  'feel','feels','felt','fine','food','family','fall','fix',
-  'thank','thanks','thirsty','tired','today','tomorrow','toilet','try','they','think','there',
-  'can','call','called','come','cold','comfortable','could',
-  'doctor','dizzy','do','done','dad','different',
-  'medicine','medication','more','maybe','my','me','mom',
-  'bathroom','bad','bed','blanket','be','been','better','both','back',
-  'good','get','go','going',
-  'okay','ok',
-  'stop','sorry','soon','sleep','sleepy','she','some','should','something','sometimes',
-  'very','uncomfortable',
-  'right','room','ready',
-  'enough','exhausted',
-  'left','leg','lower','like','love','later','less',
-  'might','must','more',
-  'up','us',
-  'just','jaw',
-  'keep','knee',
-].filter((w, i, a) => a.indexOf(w) === i);
-
-// ── Text composition state ────────────────────────────────────────────────────
+// ── Text state ────────────────────────────────────────────────────────────────
 
 let composedText = '';
 
-function getLastWord(): string {
-  if (composedText.endsWith(' ') || composedText === '') return '';
-  const lastSpace = composedText.lastIndexOf(' ');
-  return lastSpace === -1 ? composedText : composedText.slice(lastSpace + 1);
-}
-
-function applyPrediction(word: string) {
-  const upper = word.toUpperCase();
-  if (composedText.endsWith(' ') || composedText === '') {
-    composedText += upper + ' ';
-  } else {
-    const lastSpace = composedText.lastIndexOf(' ');
-    composedText = (lastSpace === -1 ? '' : composedText.slice(0, lastSpace + 1)) + upper + ' ';
-  }
-}
-
 function updateDisplay() {
   const el = document.getElementById('text-content')!;
-  el.textContent = composedText || 'Start typing…';
+  el.textContent = composedText || 'Look at a word to begin…';
   el.classList.toggle('placeholder', !composedText);
-}
-
-function updatePredictions(engine: GazeEngine) {
-  const prefix = getLastWord().toLowerCase();
-  const preds = prefix.length < 1
-    ? []
-    : WORD_LIST.filter(w => w.startsWith(prefix) && w !== prefix).slice(0, 5);
-
-  for (let i = 0; i < 5; i++) {
-    const el = document.getElementById(`pred-${i}`)!;
-    const word = preds[i] ?? '';
-    el.dataset.word = word;
-    const labelEl = el.querySelector('.pred-label') as HTMLElement;
-    if (labelEl) labelEl.textContent = word.toUpperCase();
-    el.classList.toggle('has-word', !!word);
-  }
 }
 
 // ── Screen helpers ────────────────────────────────────────────────────────────
@@ -159,7 +140,6 @@ function runWebcamCalibration(source: MediaPipeGazeSource): Promise<CalibrationS
       setTimeout(() => {
         clearInterval(timer);
         if (rawBuf.length >= 3) {
-          // Trim 20% outliers by Euclidean distance from centroid
           const cx = rawBuf.reduce((s, p) => s + p.x, 0) / rawBuf.length;
           const cy = rawBuf.reduce((s, p) => s + p.y, 0) / rawBuf.length;
           const sorted = [...rawBuf].sort(
@@ -206,119 +186,91 @@ function speak(text: string) {
   window.speechSynthesis.speak(currentUtterance);
 }
 
-// ── Keyboard board ────────────────────────────────────────────────────────────
+// ── Word board ────────────────────────────────────────────────────────────────
 
 const CIRC = 2 * Math.PI * 44;
 
-function buildKeyboard(engine: GazeEngine) {
-  const grid = document.getElementById('letter-grid')!;
+// Tile IDs: word0–word3, ctrl-UNDO, ctrl-SEND
+const WORD_TILE_IDS = ['word0', 'word1', 'word2', 'word3'];
+const CTRL_UNDO = 'ctrl-UNDO';
+const CTRL_SEND = 'ctrl-SEND';
+const ALL_TILE_IDS = [...WORD_TILE_IDS, CTRL_UNDO, CTRL_SEND];
+
+function makeTileHTML(label: string): string {
+  return `
+    <div class="tile-word">${label}</div>
+    <svg class="progress-ring" viewBox="0 0 100 100" aria-hidden="true">
+      <circle class="ring-track" cx="50" cy="50" r="44"/>
+      <circle class="ring-fill" cx="50" cy="50" r="44"
+        stroke-dasharray="${CIRC.toFixed(2)}"
+        stroke-dashoffset="${CIRC.toFixed(2)}"/>
+    </svg>`;
+}
+
+function buildBoard(engine: GazeEngine) {
+  const grid = document.getElementById('word-grid')!;
   grid.innerHTML = '';
 
-  // 26 letter tiles + 4 control tiles (6 columns × 5 rows = 30)
-  for (const letter of LETTERS) {
+  for (const id of WORD_TILE_IDS) {
     const el = document.createElement('div');
-    el.className = 'tile letter-tile';
-    el.id = `key-${letter}`;
-    el.innerHTML = `
-      <div class="tile-letter">${letter}</div>
-      <svg class="progress-ring" viewBox="0 0 100 100" aria-hidden="true">
-        <circle class="ring-track" cx="50" cy="50" r="44"/>
-        <circle class="ring-fill" cx="50" cy="50" r="44"
-          stroke-dasharray="${CIRC.toFixed(2)}"
-          stroke-dashoffset="${CIRC.toFixed(2)}"/>
-      </svg>`;
+    el.className = 'tile word-tile';
+    el.id = id;
+    el.innerHTML = makeTileHTML('');
     grid.appendChild(el);
   }
 
-  for (const ctrl of CONTROLS) {
-    const el = document.createElement('div');
-    el.className = 'tile control-tile';
-    el.id = `ctrl-${ctrl.id}`;
-    el.innerHTML = `
-      <div class="tile-label">${ctrl.label}</div>
-      <svg class="progress-ring" viewBox="0 0 100 100" aria-hidden="true">
-        <circle class="ring-track" cx="50" cy="50" r="44"/>
-        <circle class="ring-fill" cx="50" cy="50" r="44"
-          stroke-dasharray="${CIRC.toFixed(2)}"
-          stroke-dashoffset="${CIRC.toFixed(2)}"/>
-      </svg>`;
-    grid.appendChild(el);
-  }
+  const undo = document.createElement('div');
+  undo.className = 'tile ctrl-tile ctrl-undo';
+  undo.id = CTRL_UNDO;
+  undo.innerHTML = makeTileHTML('⌫ UNDO WORD');
+  grid.appendChild(undo);
 
-  // Prediction tiles
-  const predBar = document.getElementById('prediction-bar')!;
-  predBar.innerHTML = '';
-  for (let i = 0; i < 5; i++) {
-    const el = document.createElement('div');
-    el.className = 'tile prediction-tile';
-    el.id = `pred-${i}`;
-    el.dataset.word = '';
-    el.innerHTML = `
-      <div class="pred-label"></div>
-      <svg class="progress-ring" viewBox="0 0 100 100" aria-hidden="true">
-        <circle class="ring-track" cx="50" cy="50" r="44"/>
-        <circle class="ring-fill" cx="50" cy="50" r="44"
-          stroke-dasharray="${CIRC.toFixed(2)}"
-          stroke-dashoffset="${CIRC.toFixed(2)}"/>
-      </svg>`;
-    predBar.appendChild(el);
-  }
+  const send = document.createElement('div');
+  send.className = 'tile ctrl-tile ctrl-send';
+  send.id = CTRL_SEND;
+  send.innerHTML = makeTileHTML('SEND ▶');
+  grid.appendChild(send);
 
-  // Register all tiles as engine targets with 10px padding for easier dwell
   requestAnimationFrame(() => {
-    const register = (id: string, label: string) => {
+    for (const id of ALL_TILE_IDS) {
       const r = document.getElementById(id)!.getBoundingClientRect();
       engine.registerTarget({
         id,
         rect: { x: r.left - 10, y: r.top - 10, width: r.width + 20, height: r.height + 20 },
-        label,
+        label: id,
       });
-    };
-
-    for (const l of LETTERS)    register(`key-${l}`, l);
-    for (const c of CONTROLS)   register(`ctrl-${c.id}`, c.label);
-    for (let i = 0; i < 5; i++) register(`pred-${i}`, `prediction ${i}`);
-
-    updateDisplay();
-    updatePredictions(engine);
+    }
+    refreshWordTiles(engine);
   });
 }
 
-// ── Tile selection handler ────────────────────────────────────────────────────
+function refreshWordTiles(engine: GazeEngine) {
+  const words = getNextWords(composedText);
+  for (let i = 0; i < WORD_TILE_IDS.length; i++) {
+    const el = document.getElementById(WORD_TILE_IDS[i])!;
+    const label = words[i] ?? '';
+    el.dataset.word = label;
+    const wordEl = el.querySelector('.tile-word') as HTMLElement;
+    if (wordEl) wordEl.textContent = label;
+    el.classList.toggle('empty', !label);
+  }
+}
 
-function handleTileSelect(id: string, engine: GazeEngine) {
-  if (id.startsWith('key-')) {
-    composedText += id.slice(4); // append the letter
+function handleSelect(id: string, engine: GazeEngine) {
+  if (id === CTRL_UNDO) {
+    // Remove last word from composed text
+    const trimmed = composedText.trimEnd();
+    const lastSpace = trimmed.lastIndexOf(' ');
+    composedText = lastSpace === -1 ? '' : trimmed.slice(0, lastSpace) + ' ';
     updateDisplay();
-    updatePredictions(engine);
+    refreshWordTiles(engine);
+    return;
+  }
 
-  } else if (id.startsWith('pred-')) {
-    const word = (document.getElementById(id) as HTMLElement).dataset.word;
-    if (!word) return;
-    applyPrediction(word);
-    updateDisplay();
-    updatePredictions(engine);
-
-  } else if (id === 'ctrl-SPACE') {
-    composedText += ' ';
-    updateDisplay();
-    updatePredictions(engine);
-
-  } else if (id === 'ctrl-DELETE') {
-    composedText = composedText.slice(0, -1);
-    updateDisplay();
-    updatePredictions(engine);
-
-  } else if (id === 'ctrl-CLEAR') {
-    composedText = '';
-    updateDisplay();
-    updatePredictions(engine);
-
-  } else if (id === 'ctrl-SEND') {
+  if (id === CTRL_SEND) {
     const text = composedText.trim();
     if (!text) return;
     speak(text);
-    // Optional backend call — fails silently if not available
     fetch('/phrases/speak', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -326,13 +278,21 @@ function handleTileSelect(id: string, engine: GazeEngine) {
     }).catch(() => {});
     composedText = '';
     updateDisplay();
-    updatePredictions(engine);
+    refreshWordTiles(engine);
+    return;
   }
+
+  const el = document.getElementById(id) as HTMLElement | null;
+  const word = el?.dataset.word;
+  if (!word) return;
+  composedText = (composedText.trimEnd() + ' ' + word + ' ').trimStart();
+  updateDisplay();
+  refreshWordTiles(engine);
 }
 
 // ── Board launcher ────────────────────────────────────────────────────────────
 
-async function startKeyboard(source: GazeSource, calibration?: CalibrationProfile): Promise<GazeEngine> {
+async function startBoard(source: GazeSource, calibration?: CalibrationProfile): Promise<GazeEngine> {
   composedText = '';
 
   const engine = new GazeEngine(
@@ -342,7 +302,8 @@ async function startKeyboard(source: GazeSource, calibration?: CalibrationProfil
   if (calibration) engine.loadCalibrationProfile(calibration);
 
   showScreen('screen-board');
-  buildKeyboard(engine);
+  updateDisplay();
+  buildBoard(engine);
 
   const cursor = document.getElementById('gaze-cursor')!;
   cursor.style.display = 'block';
@@ -351,8 +312,7 @@ async function startKeyboard(source: GazeSource, calibration?: CalibrationProfil
   engine.onDwellProgress((id, progress) => {
     const el = document.getElementById(id);
     if (!el) return;
-    // Skip progress ring for empty prediction tiles
-    if (id.startsWith('pred-') && !el.dataset.word) return;
+    if (el.dataset.word === '' && WORD_TILE_IDS.includes(id)) return; // skip empty prediction tiles
     const fill = el.querySelector('.ring-fill') as SVGCircleElement | null;
     if (fill) fill.style.strokeDashoffset = String(CIRC * (1 - progress));
     el.classList.toggle('dwelling', progress > 0);
@@ -361,39 +321,35 @@ async function startKeyboard(source: GazeSource, calibration?: CalibrationProfil
   engine.onSelect((id) => {
     const el = document.getElementById(id);
     if (!el) return;
-    if (id.startsWith('pred-') && !el.dataset.word) return;
+    if (el.dataset.word === '' && WORD_TILE_IDS.includes(id)) return;
     el.classList.remove('selected');
     void el.offsetWidth;
     el.classList.add('selected');
     const fill = el.querySelector('.ring-fill') as SVGCircleElement | null;
     if (fill) fill.style.strokeDashoffset = String(CIRC);
     el.classList.remove('dwelling');
-    handleTileSelect(id, engine);
+    handleSelect(id, engine);
   });
 
   window.addEventListener('resize', () => {
     engine.clearTargets();
-    const reregister = (id: string, label: string) => {
+    for (const id of ALL_TILE_IDS) {
       const el = document.getElementById(id);
-      if (!el) return;
+      if (!el) continue;
       const r = el.getBoundingClientRect();
-      engine.registerTarget({ id, rect: { x: r.left-10, y: r.top-10, width: r.width+20, height: r.height+20 }, label });
-    };
-    for (const l of LETTERS)    reregister(`key-${l}`, l);
-    for (const c of CONTROLS)   reregister(`ctrl-${c.id}`, c.label);
-    for (let i = 0; i < 5; i++) reregister(`pred-${i}`, `prediction ${i}`);
+      engine.registerTarget({ id, rect: { x: r.left-10, y: r.top-10, width: r.width+20, height: r.height+20 }, label: id });
+    }
   });
 
   await engine.start();
   return engine;
 }
 
-// ── Button wiring (replaces listeners to avoid duplicate handlers) ────────────
+// ── Button wiring ─────────────────────────────────────────────────────────────
 
 let mpSource: MediaPipeGazeSource | null = null;
 
 function wireButtons(engine: GazeEngine, calibration: CalibrationProfile | undefined) {
-  // Clone nodes to drop old listeners cleanly
   ['btn-back', 'btn-recalibrate'].forEach(btnId => {
     const old = document.getElementById(btnId)!;
     const fresh = old.cloneNode(true) as HTMLElement;
@@ -417,7 +373,7 @@ function wireButtons(engine: GazeEngine, calibration: CalibrationProfile | undef
     showScreen('screen-calibration');
     const newSamples = await runWebcamCalibration(mpSource);
     const newCal = newSamples.length >= 2 ? buildCalibrationProfile(newSamples) : calibration;
-    const newEngine = await startKeyboard(mpSource, newCal);
+    const newEngine = await startBoard(mpSource, newCal);
     wireButtons(newEngine, newCal);
   });
 }
@@ -436,7 +392,6 @@ document.getElementById('btn-webcam')!.addEventListener('click', async () => {
   try {
     const statusEl = document.getElementById('calib-instruction');
     mpSource = new MediaPipeGazeSource();
-
     showScreen('screen-calibration');
     await mpSource.init(statusEl);
 
@@ -444,7 +399,7 @@ document.getElementById('btn-webcam')!.addEventListener('click', async () => {
     const calibration = samples.length >= 2 ? buildCalibrationProfile(samples) : undefined;
     if (!calibration) console.warn('Too few calibration samples — gaze will be uncalibrated');
 
-    const engine = await startKeyboard(mpSource, calibration);
+    const engine = await startBoard(mpSource, calibration);
     wireButtons(engine, calibration);
 
   } catch (err) {
