@@ -30,6 +30,10 @@ export interface CalibrationProfile {
   scaleY: number;
   offsetX: number;
   offsetY: number;
+  // When present, applyCalibration uses inverse-distance weighting (IDW) instead
+  // of the linear model. IDW is exact at calibration points and smoothly
+  // interpolates between them, handling the non-linearity the linear model misses.
+  samples?: CalibrationSample[];
   sampleCount: number;
   createdAt: number; // Unix ms
 }

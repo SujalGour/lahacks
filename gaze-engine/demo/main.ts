@@ -2,38 +2,86 @@ import { GazeEngine, buildCalibrationProfile } from '@catalyst/gaze-engine';
 import type { GazeSource, GazeCallback, CalibrationSample, CalibrationProfile } from '@catalyst/gaze-engine';
 import { MediaPipeGazeSource } from './mediapipe-source';
 
-// ── Tile definitions ─────────────────────────────────────────────────────────
+// ── Letter & control tile definitions ─────────────────────────────────────────
 
-const TILES = [
-  { id: 'WATER',     label: 'Water',     emoji: '💧', color: '#3b82f6', phrase: 'I would like some water, please.' },
-  { id: 'FOOD',      label: 'Food',      emoji: '🍎', color: '#22c55e', phrase: 'I am hungry. Can I have something to eat?' },
-  { id: 'BATHROOM',  label: 'Bathroom',  emoji: '🚿', color: '#f59e0b', phrase: 'I need to use the bathroom.' },
-  { id: 'PAIN',      label: 'Pain',      emoji: '😣', color: '#ef4444', phrase: 'I am in pain. Please help me.' },
-  { id: 'HELP',      label: 'Help',      emoji: '🚨', color: '#f97316', phrase: 'I need help, please.' },
-  { id: 'CALL',      label: 'Call',      emoji: '📞', color: '#8b5cf6', phrase: 'Please call someone for me.' },
-  { id: 'STOP',      label: 'Stop',      emoji: '✋', color: '#6366f1', phrase: 'Please stop.' },
-  { id: 'HELLO',     label: 'Hello',     emoji: '👋', color: '#a855f7', phrase: 'Hello! How are you?' },
-  { id: 'YES',       label: 'Yes',       emoji: '✅', color: '#10b981', phrase: 'Yes.' },
-  { id: 'NO',        label: 'No',        emoji: '❌', color: '#f43f5e', phrase: 'No.' },
-  { id: 'HAPPY',     label: 'Happy',     emoji: '😊', color: '#eab308', phrase: 'I am feeling happy today.' },
-  { id: 'THANK_YOU', label: 'Thank You', emoji: '🙏', color: '#06b6d4', phrase: 'Thank you so much.' },
+// Frequency-ordered alphabet (ETAOIN…)
+const LETTERS = ['E','T','A','O','I','N','S','R','H','L','D','C','U','M','F','P','G','W','Y','B','V','K','X','J','Q','Z'];
+
+const CONTROLS = [
+  { id: 'SPACE',  label: 'SPACE'  },
+  { id: 'DELETE', label: '⌫ DEL' },
+  { id: 'CLEAR',  label: 'CLEAR'  },
+  { id: 'SEND',   label: 'SEND ▶' },
 ];
 
-// ── Mouse gaze source ─────────────────────────────────────────────────────────
+// ── ALS-focused word list for prefix prediction ───────────────────────────────
 
-class MouseGazeSource implements GazeSource {
-  private handler: ((e: MouseEvent) => void) | null = null;
+const WORD_LIST: string[] = [
+  'i','im','ill','in','is','it',
+  'you','your','yes',
+  'no','not','now','need','needs','needed','nurse','nauseous',
+  'want','wanted','wants','water','was','will','would','where','when','who','why','we','with','well','warm',
+  'am','are','again','always','aching',
+  'pain','painful','please','pill','pills','phone','position',
+  'help','helps','hot','hungry','hurt','hurts','home','hospital','her','him','he','has','have','had','here','how',
+  'feel','feels','felt','fine','food','family','fall','fix',
+  'thank','thanks','thirsty','tired','today','tomorrow','toilet','try','they','think','there',
+  'can','call','called','come','cold','comfortable','could',
+  'doctor','dizzy','do','done','dad','different',
+  'medicine','medication','more','maybe','my','me','mom',
+  'bathroom','bad','bed','blanket','be','been','better','both','back',
+  'good','get','go','going',
+  'okay','ok',
+  'stop','sorry','soon','sleep','sleepy','she','some','should','something','sometimes',
+  'very','uncomfortable',
+  'right','room','ready',
+  'enough','exhausted',
+  'left','leg','lower','like','love','later','less',
+  'might','must','more',
+  'up','us',
+  'just','jaw',
+  'keep','knee',
+].filter((w, i, a) => a.indexOf(w) === i);
 
-  async start(callback: GazeCallback): Promise<void> {
-    this.handler = (e: MouseEvent) => {
-      callback({ x: e.clientX, y: e.clientY, confidence: 0.9, timestamp: Date.now() });
-    };
-    document.addEventListener('mousemove', this.handler);
+// ── Text composition state ────────────────────────────────────────────────────
+
+let composedText = '';
+
+function getLastWord(): string {
+  if (composedText.endsWith(' ') || composedText === '') return '';
+  const lastSpace = composedText.lastIndexOf(' ');
+  return lastSpace === -1 ? composedText : composedText.slice(lastSpace + 1);
+}
+
+function applyPrediction(word: string) {
+  const upper = word.toUpperCase();
+  if (composedText.endsWith(' ') || composedText === '') {
+    composedText += upper + ' ';
+  } else {
+    const lastSpace = composedText.lastIndexOf(' ');
+    composedText = (lastSpace === -1 ? '' : composedText.slice(0, lastSpace + 1)) + upper + ' ';
   }
+}
 
-  stop(): void {
-    if (this.handler) document.removeEventListener('mousemove', this.handler!);
-    this.handler = null;
+function updateDisplay() {
+  const el = document.getElementById('text-content')!;
+  el.textContent = composedText || 'Start typing…';
+  el.classList.toggle('placeholder', !composedText);
+}
+
+function updatePredictions(engine: GazeEngine) {
+  const prefix = getLastWord().toLowerCase();
+  const preds = prefix.length < 1
+    ? []
+    : WORD_LIST.filter(w => w.startsWith(prefix) && w !== prefix).slice(0, 5);
+
+  for (let i = 0; i < 5; i++) {
+    const el = document.getElementById(`pred-${i}`)!;
+    const word = preds[i] ?? '';
+    el.dataset.word = word;
+    const labelEl = el.querySelector('.pred-label') as HTMLElement;
+    if (labelEl) labelEl.textContent = word.toUpperCase();
+    el.classList.toggle('has-word', !!word);
   }
 }
 
@@ -51,31 +99,16 @@ const CALIB_GRID = [
   { x: 0.1, y: 0.5 }, { x: 0.5, y: 0.5 }, { x: 0.9, y: 0.5 },
   { x: 0.1, y: 0.9 }, { x: 0.5, y: 0.9 }, { x: 0.9, y: 0.9 },
 ];
-const CLICKS_PER_DOT = 3;
+const HOLD_MS = 600;
+const POLL_MS = 33;
 
-// Mouse-only calibration (no gaze data to capture)
-function runMouseCalibration(): Promise<void> {
-  return runCalibrationUI(null);
-}
-
-// Webcam calibration — captures iris position on each click
 function runWebcamCalibration(source: MediaPipeGazeSource): Promise<CalibrationSample[]> {
   const samples: CalibrationSample[] = [];
 
   return new Promise(resolve => {
-    runCalibrationUI(source, samples, resolve);
-  });
-}
-
-function runCalibrationUI(
-  source: MediaPipeGazeSource | null,
-  samples?: CalibrationSample[],
-  onDone?: (s: CalibrationSample[]) => void,
-): Promise<void> {
-  return new Promise(resolve => {
-    const surface  = document.getElementById('calib-surface')!;
-    const nEl      = document.getElementById('calib-n')!;
-    const clicksEl = document.getElementById('calib-clicks')!;
+    const surface    = document.getElementById('calib-surface')!;
+    const nEl        = document.getElementById('calib-n')!;
+    const progressEl = document.getElementById('calib-progress')!;
     surface.innerHTML = '';
 
     const dots = CALIB_GRID.map((pos, i) => {
@@ -89,89 +122,67 @@ function runCalibrationUI(
     });
 
     let current = 0;
-    let clicks  = 0;
+    let capturing = false;
     dots[0].classList.add('active');
-    nEl.textContent     = '1';
-    clicksEl.textContent = '0';
+    nEl.textContent = '1';
+    progressEl.textContent = 'Click the dot, then hold still';
 
     const advance = () => {
-      dots[current].classList.remove('active');
+      capturing = false;
+      dots[current].classList.remove('active', 'capturing');
       dots[current].classList.add('done');
       current++;
       if (current >= CALIB_GRID.length) {
         surface.innerHTML = '';
-        if (onDone && samples) onDone(samples);
-        resolve();
+        resolve(samples);
         return;
       }
-      clicks = 0;
-      clicksEl.textContent = '0';
       nEl.textContent = String(current + 1);
+      progressEl.textContent = 'Click the dot, then hold still';
       dots[current].style.opacity = '1';
       dots[current].classList.add('active');
     };
 
-    const onClick = (i: number) => {
-      if (i !== current) return;
-      clicks++;
-      clicksEl.textContent = String(clicks);
+    const startCapture = (i: number) => {
+      if (i !== current || capturing) return;
+      capturing = true;
+      const pos = CALIB_GRID[i];
+      const rawBuf: Array<{ x: number; y: number }> = [];
+      dots[i].classList.add('capturing');
+      progressEl.textContent = 'Holding… keep your gaze steady';
 
-      // Capture iris position for webcam calibration
-      if (source && samples) {
+      const timer = setInterval(() => {
         const raw = source.lastRaw;
-        if (raw) {
+        if (raw) rawBuf.push({ x: raw.x, y: raw.y });
+      }, POLL_MS);
+
+      setTimeout(() => {
+        clearInterval(timer);
+        if (rawBuf.length >= 3) {
+          // Trim 20% outliers by Euclidean distance from centroid
+          const cx = rawBuf.reduce((s, p) => s + p.x, 0) / rawBuf.length;
+          const cy = rawBuf.reduce((s, p) => s + p.y, 0) / rawBuf.length;
+          const sorted = [...rawBuf].sort(
+            (a, b) => (a.x-cx)**2 + (a.y-cy)**2 - ((b.x-cx)**2 + (b.y-cy)**2)
+          );
+          const kept = sorted.slice(0, Math.max(1, Math.floor(sorted.length * 0.8)));
           samples.push({
-            screenX:   CALIB_GRID[i].x * window.innerWidth,
-            screenY:   CALIB_GRID[i].y * window.innerHeight,
-            rawGazeX:  raw.x,
-            rawGazeY:  raw.y,
+            screenX:  pos.x * window.innerWidth,
+            screenY:  pos.y * window.innerHeight,
+            rawGazeX: kept.reduce((s, p) => s + p.x, 0) / kept.length,
+            rawGazeY: kept.reduce((s, p) => s + p.y, 0) / kept.length,
           });
         }
-      }
-
-      if (clicks >= CLICKS_PER_DOT) advance();
+        advance();
+      }, HOLD_MS);
     };
 
-    dots.forEach((dot, i) => dot.addEventListener('click', () => onClick(i)));
+    dots.forEach((dot, i) => dot.addEventListener('click', () => startCapture(i)));
 
     document.getElementById('btn-skip-calib')!.addEventListener('click', () => {
       surface.innerHTML = '';
-      if (onDone && samples) onDone(samples);
-      resolve();
+      resolve(samples);
     }, { once: true });
-  });
-}
-
-// ── Tile grid ─────────────────────────────────────────────────────────────────
-
-const CIRC = 2 * Math.PI * 44; // SVG ring circumference (r=44, viewBox 100×100)
-
-function buildBoard(engine: GazeEngine) {
-  const grid = document.getElementById('tile-grid')!;
-  grid.innerHTML = '';
-
-  for (const tile of TILES) {
-    const el = document.createElement('div');
-    el.className = 'tile';
-    el.id = `tile-${tile.id}`;
-    el.style.setProperty('--color', tile.color);
-    el.innerHTML = `
-      <div class="tile-emoji">${tile.emoji}</div>
-      <div class="tile-label">${tile.label}</div>
-      <svg class="progress-ring" viewBox="0 0 100 100" aria-hidden="true">
-        <circle class="ring-track" cx="50" cy="50" r="44"/>
-        <circle class="ring-fill"  cx="50" cy="50" r="44"
-          stroke-dasharray="${CIRC.toFixed(2)}"
-          stroke-dashoffset="${CIRC.toFixed(2)}"/>
-      </svg>`;
-    grid.appendChild(el);
-  }
-
-  requestAnimationFrame(() => {
-    for (const tile of TILES) {
-      const r = document.getElementById(`tile-${tile.id}`)!.getBoundingClientRect();
-      engine.registerTarget({ id: tile.id, rect: { x: r.left, y: r.top, width: r.width, height: r.height }, label: tile.label });
-    }
   });
 }
 
@@ -187,100 +198,234 @@ function moveCursor(x: number, y: number) {
 
 let currentUtterance: SpeechSynthesisUtterance | null = null;
 
-function speak(phrase: string, tileId: string) {
-  const textEl = document.getElementById('speech-text')!;
-  const iconEl = document.getElementById('speech-icon')!;
-  const tile   = TILES.find(t => t.id === tileId)!;
+function speak(text: string) {
+  if (!window.speechSynthesis) return;
+  if (currentUtterance) window.speechSynthesis.cancel();
+  currentUtterance = new SpeechSynthesisUtterance(text);
+  currentUtterance.rate = 0.9;
+  window.speechSynthesis.speak(currentUtterance);
+}
 
-  textEl.textContent = phrase;
-  textEl.classList.add('speaking');
-  iconEl.textContent = tile.emoji;
+// ── Keyboard board ────────────────────────────────────────────────────────────
 
-  if (window.speechSynthesis) {
-    if (currentUtterance) window.speechSynthesis.cancel();
-    currentUtterance = new SpeechSynthesisUtterance(phrase);
-    currentUtterance.rate = 0.95;
-    window.speechSynthesis.speak(currentUtterance);
+const CIRC = 2 * Math.PI * 44;
+
+function buildKeyboard(engine: GazeEngine) {
+  const grid = document.getElementById('letter-grid')!;
+  grid.innerHTML = '';
+
+  // 26 letter tiles + 4 control tiles (6 columns × 5 rows = 30)
+  for (const letter of LETTERS) {
+    const el = document.createElement('div');
+    el.className = 'tile letter-tile';
+    el.id = `key-${letter}`;
+    el.innerHTML = `
+      <div class="tile-letter">${letter}</div>
+      <svg class="progress-ring" viewBox="0 0 100 100" aria-hidden="true">
+        <circle class="ring-track" cx="50" cy="50" r="44"/>
+        <circle class="ring-fill" cx="50" cy="50" r="44"
+          stroke-dasharray="${CIRC.toFixed(2)}"
+          stroke-dashoffset="${CIRC.toFixed(2)}"/>
+      </svg>`;
+    grid.appendChild(el);
   }
 
-  setTimeout(() => textEl.classList.remove('speaking'), 2500);
+  for (const ctrl of CONTROLS) {
+    const el = document.createElement('div');
+    el.className = 'tile control-tile';
+    el.id = `ctrl-${ctrl.id}`;
+    el.innerHTML = `
+      <div class="tile-label">${ctrl.label}</div>
+      <svg class="progress-ring" viewBox="0 0 100 100" aria-hidden="true">
+        <circle class="ring-track" cx="50" cy="50" r="44"/>
+        <circle class="ring-fill" cx="50" cy="50" r="44"
+          stroke-dasharray="${CIRC.toFixed(2)}"
+          stroke-dashoffset="${CIRC.toFixed(2)}"/>
+      </svg>`;
+    grid.appendChild(el);
+  }
+
+  // Prediction tiles
+  const predBar = document.getElementById('prediction-bar')!;
+  predBar.innerHTML = '';
+  for (let i = 0; i < 5; i++) {
+    const el = document.createElement('div');
+    el.className = 'tile prediction-tile';
+    el.id = `pred-${i}`;
+    el.dataset.word = '';
+    el.innerHTML = `
+      <div class="pred-label"></div>
+      <svg class="progress-ring" viewBox="0 0 100 100" aria-hidden="true">
+        <circle class="ring-track" cx="50" cy="50" r="44"/>
+        <circle class="ring-fill" cx="50" cy="50" r="44"
+          stroke-dasharray="${CIRC.toFixed(2)}"
+          stroke-dashoffset="${CIRC.toFixed(2)}"/>
+      </svg>`;
+    predBar.appendChild(el);
+  }
+
+  // Register all tiles as engine targets with 10px padding for easier dwell
+  requestAnimationFrame(() => {
+    const register = (id: string, label: string) => {
+      const r = document.getElementById(id)!.getBoundingClientRect();
+      engine.registerTarget({
+        id,
+        rect: { x: r.left - 10, y: r.top - 10, width: r.width + 20, height: r.height + 20 },
+        label,
+      });
+    };
+
+    for (const l of LETTERS)    register(`key-${l}`, l);
+    for (const c of CONTROLS)   register(`ctrl-${c.id}`, c.label);
+    for (let i = 0; i < 5; i++) register(`pred-${i}`, `prediction ${i}`);
+
+    updateDisplay();
+    updatePredictions(engine);
+  });
+}
+
+// ── Tile selection handler ────────────────────────────────────────────────────
+
+function handleTileSelect(id: string, engine: GazeEngine) {
+  if (id.startsWith('key-')) {
+    composedText += id.slice(4); // append the letter
+    updateDisplay();
+    updatePredictions(engine);
+
+  } else if (id.startsWith('pred-')) {
+    const word = (document.getElementById(id) as HTMLElement).dataset.word;
+    if (!word) return;
+    applyPrediction(word);
+    updateDisplay();
+    updatePredictions(engine);
+
+  } else if (id === 'ctrl-SPACE') {
+    composedText += ' ';
+    updateDisplay();
+    updatePredictions(engine);
+
+  } else if (id === 'ctrl-DELETE') {
+    composedText = composedText.slice(0, -1);
+    updateDisplay();
+    updatePredictions(engine);
+
+  } else if (id === 'ctrl-CLEAR') {
+    composedText = '';
+    updateDisplay();
+    updatePredictions(engine);
+
+  } else if (id === 'ctrl-SEND') {
+    const text = composedText.trim();
+    if (!text) return;
+    speak(text);
+    // Optional backend call — fails silently if not available
+    fetch('/phrases/speak', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    }).catch(() => {});
+    composedText = '';
+    updateDisplay();
+    updatePredictions(engine);
+  }
 }
 
 // ── Board launcher ────────────────────────────────────────────────────────────
 
-let mpSource: MediaPipeGazeSource | null = null;
+async function startKeyboard(source: GazeSource, calibration?: CalibrationProfile): Promise<GazeEngine> {
+  composedText = '';
 
-async function startBoard(source: GazeSource, modeLabel: string, calibration?: CalibrationProfile) {
   const engine = new GazeEngine(
     { dwellMs: 1200, confidenceThreshold: 0.3, filterAlpha: 0.5 },
     source,
   );
-  // Load calibration into the engine so it runs in the correct pipeline order:
-  // raw gaze → calibrate (iris offset → screen px) → EMA filter → dwell detect
   if (calibration) engine.loadCalibrationProfile(calibration);
 
   showScreen('screen-board');
-  document.getElementById('mode-badge')!.textContent = modeLabel;
-  buildBoard(engine);
+  buildKeyboard(engine);
 
   const cursor = document.getElementById('gaze-cursor')!;
   cursor.style.display = 'block';
   engine.onGaze(pt => moveCursor(pt.x, pt.y));
 
   engine.onDwellProgress((id, progress) => {
-    const fill = document.querySelector(`#tile-${id} .ring-fill`) as SVGCircleElement | null;
+    const el = document.getElementById(id);
+    if (!el) return;
+    // Skip progress ring for empty prediction tiles
+    if (id.startsWith('pred-') && !el.dataset.word) return;
+    const fill = el.querySelector('.ring-fill') as SVGCircleElement | null;
     if (fill) fill.style.strokeDashoffset = String(CIRC * (1 - progress));
-    document.getElementById(`tile-${id}`)?.classList.toggle('dwelling', progress > 0);
+    el.classList.toggle('dwelling', progress > 0);
   });
 
   engine.onSelect((id) => {
-    const tile = TILES.find(t => t.id === id);
-    if (!tile) return;
-    const el = document.getElementById(`tile-${id}`)!;
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (id.startsWith('pred-') && !el.dataset.word) return;
     el.classList.remove('selected');
     void el.offsetWidth;
     el.classList.add('selected');
-    speak(tile.phrase, id);
     const fill = el.querySelector('.ring-fill') as SVGCircleElement | null;
     if (fill) fill.style.strokeDashoffset = String(CIRC);
     el.classList.remove('dwelling');
+    handleTileSelect(id, engine);
+  });
+
+  window.addEventListener('resize', () => {
+    engine.clearTargets();
+    const reregister = (id: string, label: string) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      engine.registerTarget({ id, rect: { x: r.left-10, y: r.top-10, width: r.width+20, height: r.height+20 }, label });
+    };
+    for (const l of LETTERS)    reregister(`key-${l}`, l);
+    for (const c of CONTROLS)   reregister(`ctrl-${c.id}`, c.label);
+    for (let i = 0; i < 5; i++) reregister(`pred-${i}`, `prediction ${i}`);
+  });
+
+  await engine.start();
+  return engine;
+}
+
+// ── Button wiring (replaces listeners to avoid duplicate handlers) ────────────
+
+let mpSource: MediaPipeGazeSource | null = null;
+
+function wireButtons(engine: GazeEngine, calibration: CalibrationProfile | undefined) {
+  // Clone nodes to drop old listeners cleanly
+  ['btn-back', 'btn-recalibrate'].forEach(btnId => {
+    const old = document.getElementById(btnId)!;
+    const fresh = old.cloneNode(true) as HTMLElement;
+    old.parentNode!.replaceChild(fresh, old);
   });
 
   document.getElementById('btn-back')!.addEventListener('click', () => {
     engine.stop();
     mpSource?.shutdown();
     mpSource = null;
-    cursor.style.display = 'none';
-    document.getElementById('tile-grid')!.innerHTML = '';
-    // Reset webcam button label
+    document.getElementById('gaze-cursor')!.style.display = 'none';
     const btn = document.getElementById('btn-webcam') as HTMLButtonElement;
-    btn.textContent = '📷 Try with Webcam →';
+    btn.textContent = '📷 Start with Webcam →';
     btn.disabled = false;
     showScreen('screen-landing');
-  }, { once: true });
-
-  window.addEventListener('resize', () => {
-    engine.clearTargets();
-    for (const tile of TILES) {
-      const el = document.getElementById(`tile-${tile.id}`);
-      if (!el) continue;
-      const r = el.getBoundingClientRect();
-      engine.registerTarget({ id: tile.id, rect: { x: r.left, y: r.top, width: r.width, height: r.height }, label: tile.label });
-    }
   });
 
-  await engine.start();
+  document.getElementById('btn-recalibrate')!.addEventListener('click', async () => {
+    engine.stop();
+    if (!mpSource) return;
+    showScreen('screen-calibration');
+    const newSamples = await runWebcamCalibration(mpSource);
+    const newCal = newSamples.length >= 2 ? buildCalibrationProfile(newSamples) : calibration;
+    const newEngine = await startKeyboard(mpSource, newCal);
+    wireButtons(newEngine, newCal);
+  });
 }
 
-// ── Entry points ──────────────────────────────────────────────────────────────
-
-document.getElementById('btn-mouse')!.addEventListener('click', async () => {
-  await startBoard(new MouseGazeSource(), '🖱 Mouse');
-});
+// ── Entry point ───────────────────────────────────────────────────────────────
 
 document.getElementById('btn-webcam')!.addEventListener('click', async () => {
   const btn = document.getElementById('btn-webcam') as HTMLButtonElement;
-
   const setStatus = (msg: string, disabled = true) => {
     btn.textContent = msg;
     btn.disabled = disabled;
@@ -292,22 +437,16 @@ document.getElementById('btn-webcam')!.addEventListener('click', async () => {
     const statusEl = document.getElementById('calib-instruction');
     mpSource = new MediaPipeGazeSource();
 
-    // init() loads the model + opens camera; shows progress in the status element
     showScreen('screen-calibration');
     await mpSource.init(statusEl);
 
-    // Calibration: user clicks 9 dots; we record (iris offset → screen pos) at each click
     const samples = await runWebcamCalibration(mpSource);
-
-    // Build calibration profile — maps raw iris offset to screen coordinates.
-    // Requires at least 2 samples for the linear regression; more = better accuracy.
-    const calibration = samples.length >= 2
-      ? buildCalibrationProfile(samples)
-      : undefined;
-
+    const calibration = samples.length >= 2 ? buildCalibrationProfile(samples) : undefined;
     if (!calibration) console.warn('Too few calibration samples — gaze will be uncalibrated');
 
-    await startBoard(mpSource, '👁 Webcam', calibration);
+    const engine = await startKeyboard(mpSource, calibration);
+    wireButtons(engine, calibration);
+
   } catch (err) {
     console.error('Webcam init failed:', err);
     const msg = err instanceof Error ? err.message : String(err);
@@ -315,6 +454,6 @@ document.getElementById('btn-webcam')!.addEventListener('click', async () => {
     mpSource?.shutdown();
     mpSource = null;
     showScreen('screen-landing');
-    setTimeout(() => setStatus('📷 Try with Webcam →', false), 4000);
+    setTimeout(() => setStatus('📷 Start with Webcam →', false), 4000);
   }
 });

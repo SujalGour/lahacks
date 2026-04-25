@@ -13,7 +13,7 @@
   --ring-track: rgba(255,255,255,0.15);
   --ring-fill: #7c6fff;
   --selected-glow: rgba(124, 111, 255, 0.6);
-  --radius: 18px;
+  --radius: 14px;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
 }
 
@@ -32,7 +32,7 @@ html, body {
   display: none;
   flex-direction: column;
   height: 100vh;
-  padding: 24px;
+  padding: 20px;
 }
 .screen.active { display: flex; }
 
@@ -48,12 +48,12 @@ html, body {
   flex-direction: column;
   align-items: center;
   gap: 20px;
-  max-width: 640px;
+  max-width: 480px;
   text-align: center;
 }
 
 .logo {
-  font-size: 1rem;
+  font-size: 0.9rem;
   font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -68,25 +68,17 @@ html, body {
 }
 
 .landing-content p {
-  font-size: 1rem;
+  font-size: 0.95rem;
   color: var(--text-muted);
-  max-width: 480px;
-}
-
-.mode-cards {
-  display: flex;
-  gap: 16px;
-  margin-top: 8px;
-  flex-wrap: wrap;
-  justify-content: center;
+  line-height: 1.55;
 }
 
 .mode-card {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 28px 24px;
-  width: 220px;
+  padding: 28px 32px;
+  width: 280px;
   cursor: pointer;
   text-align: center;
   color: var(--text);
@@ -95,6 +87,7 @@ html, body {
   flex-direction: column;
   gap: 10px;
   align-items: center;
+  margin-top: 8px;
 }
 
 .mode-card:hover {
@@ -103,32 +96,31 @@ html, body {
   box-shadow: 0 8px 32px rgba(124, 111, 255, 0.2);
 }
 
-.mode-icon { font-size: 2.4rem; }
+.mode-icon  { font-size: 2.4rem; }
 .mode-title { font-size: 1rem; font-weight: 600; }
-.mode-desc { font-size: 0.78rem; color: var(--text-muted); line-height: 1.4; }
+.mode-desc  { font-size: 0.78rem; color: var(--text-muted); line-height: 1.4; }
 
 /* ── Calibration ──────────────────────────────────────────────────────────── */
 
-#screen-calibration {
-  align-items: center;
-}
+#screen-calibration { align-items: center; }
 
 .calib-header {
   text-align: center;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   margin-bottom: 12px;
 }
 
 .calib-header h2 { font-size: 1.4rem; }
 .calib-header p  { color: var(--text-muted); font-size: 0.9rem; }
 .calib-counter   { font-size: 0.85rem; color: var(--accent); font-weight: 600; }
+.calib-progress  { font-size: 0.8rem; color: var(--text-muted); font-style: italic; min-height: 1.2em; }
 
 #calib-surface {
   position: fixed;
   inset: 0;
-  pointer-events: none; /* children override */
+  pointer-events: none;
   z-index: 10;
 }
 
@@ -152,6 +144,13 @@ html, body {
   animation: pulse 1s infinite;
 }
 
+.calib-dot.capturing {
+  background: #facc15;
+  border-color: #facc15;
+  box-shadow: 0 0 28px rgba(250, 204, 21, 0.8);
+  animation: none;
+}
+
 .calib-dot.done {
   background: rgba(255,255,255,0.12);
   border-color: rgba(255,255,255,0.15);
@@ -169,58 +168,54 @@ html, body {
   border: 1px solid var(--border);
   border-radius: 8px;
   color: var(--text-muted);
-  padding: 8px 18px;
+  padding: 7px 16px;
   cursor: pointer;
-  font-size: 0.85rem;
+  font-size: 0.82rem;
   margin-top: 16px;
   position: relative;
   z-index: 20;
   transition: color 0.2s, border-color 0.2s;
+  flex-shrink: 0;
 }
 .ghost-btn:hover { color: var(--text); border-color: rgba(255,255,255,0.3); }
 
 /* ── Board header ─────────────────────────────────────────────────────────── */
 
-#screen-board { gap: 16px; padding: 16px 20px 12px; }
+#screen-board { gap: 10px; padding: 12px 14px 10px; }
 
 #board-header {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   flex-shrink: 0;
 }
 
-#speech-bubble {
+#text-display {
   flex: 1;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 40px;
-  padding: 10px 20px;
+  border-radius: 36px;
+  padding: 9px 18px;
+  min-height: 42px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: 46px;
   overflow: hidden;
 }
 
-#speech-icon { font-size: 1.1rem; flex-shrink: 0; }
-
-#speech-text {
+#text-content {
   font-size: 1rem;
   font-weight: 500;
-  color: var(--text-muted);
+  color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  transition: color 0.3s;
+  letter-spacing: 0.04em;
 }
 
-#speech-text.speaking {
-  color: var(--text);
-}
+#text-content.placeholder { color: var(--text-muted); font-weight: 400; }
 
 #mode-badge {
-  font-size: 0.7rem;
+  font-size: 0.68rem;
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -231,18 +226,63 @@ html, body {
   flex-shrink: 0;
 }
 
-/* ── Tile grid ────────────────────────────────────────────────────────────── */
+/* ── Prediction bar ───────────────────────────────────────────────────────── */
 
-#tile-grid {
+#prediction-bar {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  grid-template-rows: repeat(3, 1fr);
-  gap: 12px;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+  flex-shrink: 0;
+  height: 58px;
+}
+
+.prediction-tile {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+  cursor: default;
+  transition: border-color 0.2s;
+  opacity: 0.35;
+}
+
+.prediction-tile.has-word {
+  opacity: 1;
+  border-color: rgba(124, 111, 255, 0.25);
+}
+
+.prediction-tile.dwelling {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), inset 0 0 20px rgba(124, 111, 255, 0.1);
+}
+
+.prediction-tile.selected { animation: tile-pop 0.4s ease forwards; }
+
+.pred-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: 0.06em;
+  z-index: 1;
+  text-align: center;
+  padding: 0 4px;
+}
+
+/* ── Letter grid ──────────────────────────────────────────────────────────── */
+
+#letter-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 8px;
   flex: 1;
   min-height: 0;
 }
 
-/* ── Individual tile ──────────────────────────────────────────────────────── */
+/* ── Base tile ────────────────────────────────────────────────────────────── */
 
 .tile {
   position: relative;
@@ -250,65 +290,63 @@ html, body {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
   cursor: default;
   overflow: hidden;
-  transition: border-color 0.2s, box-shadow 0.2s;
+  transition: border-color 0.15s, box-shadow 0.15s;
   --color: #7c6fff;
-  --progress: 0;
-}
-
-.tile:hover {
-  border-color: color-mix(in srgb, var(--color) 60%, transparent);
 }
 
 .tile.dwelling {
   border-color: var(--color);
-  box-shadow: 0 0 0 1px var(--color), inset 0 0 32px color-mix(in srgb, var(--color) 8%, transparent);
+  box-shadow: 0 0 0 1px var(--color), inset 0 0 24px color-mix(in srgb, var(--color) 8%, transparent);
 }
 
-.tile.selected {
-  animation: tile-pop 0.45s ease forwards;
-}
+.tile.selected { animation: tile-pop 0.4s ease forwards; }
 
 @keyframes tile-pop {
   0%   { transform: scale(1);    box-shadow: 0 0 0 0 var(--color); }
-  40%  { transform: scale(1.04); box-shadow: 0 0 0 6px color-mix(in srgb, var(--color) 40%, transparent); }
+  40%  { transform: scale(1.06); box-shadow: 0 0 0 6px color-mix(in srgb, var(--color) 40%, transparent); }
   100% { transform: scale(1);    box-shadow: none; }
 }
 
-.tile-emoji {
-  font-size: clamp(1.8rem, 4vw, 2.8rem);
-  line-height: 1;
+/* ── Letter tile ──────────────────────────────────────────────────────────── */
+
+.letter-tile { --color: #7c6fff; }
+
+.tile-letter {
+  font-size: clamp(1.2rem, 2.8vw, 2rem);
+  font-weight: 700;
+  color: var(--text);
+  z-index: 1;
   user-select: none;
+  letter-spacing: -0.02em;
 }
+
+/* ── Control tile ─────────────────────────────────────────────────────────── */
+
+.control-tile {
+  --color: #4ade80;
+  background: color-mix(in srgb, #4ade80 6%, var(--surface));
+  border-color: rgba(74, 222, 128, 0.15);
+}
+
+#ctrl-DELETE { --color: #f87171; background: color-mix(in srgb, #f87171 6%, var(--surface)); border-color: rgba(248,113,113,0.15); }
+#ctrl-CLEAR  { --color: #fb923c; background: color-mix(in srgb, #fb923c 6%, var(--surface)); border-color: rgba(251,146,60,0.15); }
+#ctrl-SEND   { --color: #34d399; background: color-mix(in srgb, #34d399 10%, var(--surface)); border-color: rgba(52,211,153,0.2); }
 
 .tile-label {
-  font-size: clamp(0.7rem, 1.4vw, 0.95rem);
-  font-weight: 600;
+  font-size: clamp(0.6rem, 1.2vw, 0.82rem);
+  font-weight: 700;
   color: var(--text);
   text-align: center;
+  z-index: 1;
+  user-select: none;
+  letter-spacing: 0.04em;
 }
 
-/* Category color stripe at the bottom */
-.tile::before {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 3px;
-  background: var(--color);
-  opacity: 0.5;
-  transition: opacity 0.2s;
-}
-
-.tile.dwelling::before { opacity: 1; }
-
-/* ── Dwell progress ring (SVG injected per tile) ──────────────────────────── */
+/* ── Dwell progress ring ──────────────────────────────────────────────────── */
 
 .progress-ring {
   position: absolute;
@@ -329,7 +367,6 @@ html, body {
   stroke: var(--color);
   stroke-width: 3;
   stroke-linecap: round;
-  /* Circumference of r=48% of 100 viewBox = ~301. We compute per tile. */
   transition: stroke-dashoffset 0.08s linear;
   transform-origin: 50% 50%;
   transform: rotate(-90deg);
@@ -348,11 +385,11 @@ html, body {
   z-index: 9999;
   transform: translate(-50%, -50%);
   transition: left 0.06s linear, top 0.06s linear;
-  display: none; /* shown once engine starts */
+  display: none;
   box-shadow: 0 0 8px rgba(255,255,255,0.3);
 }
 
-/* ── WebGazer video pip ───────────────────────────────────────────────────── */
+/* ── WebGazer / MediaPipe video pip ──────────────────────────────────────── */
 
 #webgazerVideoFeed,
 #webgazerVideoCanvas {
@@ -367,9 +404,4 @@ html, body {
   border: 1px solid var(--border) !important;
   z-index: 500 !important;
   opacity: 0.85;
-}
-
-#webgazerFaceOverlay,
-#webgazerFaceFeedbackBox {
-  display: none !important;
 }

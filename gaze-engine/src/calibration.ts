@@ -35,7 +35,39 @@ export function buildCalibrationProfile(samples: CalibrationSample[]): Calibrati
     samples.map(s => s.screenY),
   );
 
-  return { scaleX, scaleY, offsetX, offsetY, sampleCount: samples.length, createdAt: Date.now() };
+  // Store samples so applyCalibration can use IDW instead of the linear model.
+  // IDW is exact at calibration points and handles edge non-linearity better.
+  return {
+    scaleX, scaleY, offsetX, offsetY,
+    samples: [...samples],
+    sampleCount: samples.length,
+    createdAt: Date.now(),
+  };
+}
+
+/**
+ * Inverse-Distance Weighting interpolation.
+ * Each calibration point contributes to the estimate weighted by 1/d².
+ * This is exact at every calibration point and smoothly interpolates between them,
+ * unlike the linear model which finds a single best-fit plane.
+ */
+function idw(rawX: number, rawY: number, samples: CalibrationSample[]): { x: number; y: number } {
+  let wSum = 0, wxSum = 0, wySum = 0;
+
+  for (const s of samples) {
+    const dx = rawX - s.rawGazeX;
+    const dy = rawY - s.rawGazeY;
+    const d2 = dx * dx + dy * dy;
+
+    if (d2 < 1e-12) return { x: s.screenX, y: s.screenY }; // exactly on a calibration point
+
+    const w = 1 / (d2 * d2); // 1/d⁴ — sharper locality than standard 1/d²
+    wSum  += w;
+    wxSum += w * s.screenX;
+    wySum += w * s.screenY;
+  }
+
+  return { x: wxSum / wSum, y: wySum / wSum };
 }
 
 export function applyCalibration(
@@ -43,6 +75,11 @@ export function applyCalibration(
   rawY: number,
   profile: CalibrationProfile,
 ): { x: number; y: number } {
+  // Use IDW when samples are stored (built by buildCalibrationProfile).
+  // Fall back to the linear model for profiles created without samples (tests, manual profiles).
+  if (profile.samples && profile.samples.length >= 3) {
+    return idw(rawX, rawY, profile.samples);
+  }
   return {
     x: profile.scaleX * rawX + profile.offsetX,
     y: profile.scaleY * rawY + profile.offsetY,
