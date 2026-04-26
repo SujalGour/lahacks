@@ -1,92 +1,167 @@
-# EyeText — Gaze-Powered AAC
+# EyeText / Catalyst for Care Monorepo
 
-An AI-powered AAC (Augmentative and Alternative Communication) system for non-verbal patients, people with disabilities, and elderly users. A patient dwells their gaze on a tile; the system speaks a personalized, context-aware response and — if urgent — notifies their caregivers.
+Gaze-powered AAC platform for non-verbal communication. The primary runtime entrypoint is the gaze demo in `gaze-engine/demo`, which captures webcam gaze, resolves dwell selections, and orchestrates calls into the agent pipeline and backend.
 
-> **Tagline:** Your eyes are the new keyboard.
+## What is the main entrypoint?
 
-## Sponsor tracks
+For end-to-end local usage, start from:
 
-| Track | Component |
-|-------|-----------|
-| Fetch.ai Agentverse | 3-agent pipeline (intent → memory → router) |
-| Cloudinary | Tile icon hosting + session video upload |
-| MongoDB Atlas | Vector search for personalized phrase prediction |
-| ElevenLabs | Voice synthesis in the Router Agent |
+- `gaze-engine` (`npm run dev`)
+- Open the demo page and click "Start with Webcam"
 
-## Architecture
+The demo drives everything else:
 
-```
-Webcam
-  └─► gaze-engine (TS lib)
-          └─► POST /intent  ──► agents/ (Fetch.ai uAgents)
-                                    ├─ Intent Agent   (classify)
-                                    ├─ Memory Agent   (retrieve + LLM generate)
-                                    └─ Router Agent   (TTS + SMS + log)
-                                          └─► backend/ (MongoDB + Express)
-                                                └─► caregiver dashboard
-```
+- Sends phrase prediction requests to `agents/http_gateway.py` (`POST /predict`)
+- Sends intent/routing requests to `agents/http_gateway.py` (`POST /intent`)
+- Logs history and phrases to `backend` (`/history`, `/phrases`)
+- Generates session summaries through `backend` (`POST /session/end`)
+- Records and uploads session video via `claudinary-video`
 
-## Repos / folders
+## High-level architecture
 
-| Folder | What it does |
-|--------|-------------|
-| [gaze-engine/](gaze-engine/README.md) | Webcam → tile-selection events (TypeScript, MediaPipe) |
-| [agents/](agents/README.md) | Fetch.ai uAgent pipeline + HTTP gateway |
-| [backend/](backend/README.md) | REST API + MongoDB Atlas Vector Search + Gemini session analysis |
-| [shared/](shared/README.md) | Type contracts and API spec |
-| [cloudinary-assets/](cloudinary-assets/README.md) | Icon upload, theme presets, tile manifest |
+```text
+Webcam + WebGazer
+      -> gaze-engine/demo/main.ts (UI + app flow)
+            -> @catalyst/gaze-engine (core gaze library)
+                  -> onSelect/onDwellProgress events
 
----
+Demo runtime network calls:
+      -> agents/http_gateway.py:8000
+             - POST /predict  (next-word suggestions)
+             - POST /intent   (6-step agent pipeline)
+      -> backend/src/server.ts:3001
+             - POST /history
+             - POST /phrases
+             - POST /session/end
+             - GET  /history/:userId (caregiver dashboard path)
 
-## Running the app (`newversion3am` branch)
-
-Run all three services in separate terminals.
-
-### Prerequisites
-
-Create the following `.env` files (values in team 1Password / Notion):
-
-**`backend/.env`**
-```
-MONGODB_URI=<atlas connection string>
-GEMINI_API_KEY=<google ai studio key>
-CLOUDINARY_CLOUD_NAME=dsddkg2x6
-CLOUDINARY_API_KEY=<cloudinary api key>
-CLOUDINARY_API_SECRET=<cloudinary api secret>
-PORT=3001
+Media path:
+      -> claudinary-video/src/recorder.ts (MediaRecorder)
+      -> claudinary-video/src/uploader.ts (Cloudinary upload API)
+      -> backend/src/lib/claude-analyzer.ts (Gemini summary from frames + transcript)
 ```
 
-**`frontend/.env`**
-```
-VITE_CLOUDINARY_CLOUD_NAME=dsddkg2x6
-VITE_CLOUDINARY_UPLOAD_PRESET=Lahacks
-VITE_AGENT_URL=http://localhost:8000
-VITE_BACKEND_URL=http://localhost:3001
-VITE_DEMO_USER_ID=demo-1
-```
+## Repository map
 
-**`agents/.env`**
-```
-ASI1_API_KEY=<asi1 api key>
-```
+### Core runtime modules
 
-### Terminal 1 — Backend (port 3001)
+- `gaze-engine/`
+      - Core TS library in `src/` (`GazeEngine`, filter, dwell, calibration, trackers)
+      - Main app demo in `demo/` (this is the active UX flow)
+      - Primary command: `npm run dev`
+
+- `agents/`
+      - FastAPI gateway in `http_gateway.py` (frontend/backend bridge)
+      - 6-agent decomposition represented in prompts and per-step functions
+      - Optional uAgents registration/orchestration scripts (e.g. `bureau.py`)
+
+- `backend/`
+      - Express + MongoDB API (`src/server.ts`)
+      - Vector search and embedding pipelines
+      - Session analysis endpoint (`/session/end`) using Gemini
+
+- `claudinary-video/`
+      - Browser-side session recorder and Cloudinary uploader utilities used by the gaze demo
+
+### Supporting modules
+
+- `frontend/`
+      - Separate React dashboard/board app (not the primary gaze demo entrypoint)
+      - Also talks to `agents` and `backend`
+
+- `cloudinary-assets/`
+      - Node scripts to upload icon assets, generate tile manifest, and verify URLs
+
+- `shared/`
+      - Cross-language model contracts (`models.ts`, `models.py`)
+      - API contract document (`api-contract.md`)
+
+- `cloudinary-video/`
+      - TS package for frame extraction/analysis helpers
+      - Coexists with `claudinary-video` (name is similar; purposes overlap partially)
+
+## Detailed flow from gaze selection to caregiver output
+
+1. User starts camera in `gaze-engine/demo/main.ts`.
+2. Demo loads WebGazer and creates `GazeEngine`.
+3. `GazeEngine` pipeline executes per frame:
+       - optional calibration transform (`src/calibration.ts`)
+       - EMA smoothing (`src/filter.ts`)
+       - dwell target detection (`src/dwell.ts`)
+4. On tile selection (`onSelect`), demo handles mode-specific behavior:
+       - Talk mode: compose text, request predictions, send final phrase
+       - Help mode: immediate phrase speech
+5. For intent generation, demo calls `POST /intent` on `agents/http_gateway.py`.
+6. Gateway runs a 6-step pipeline:
+       - gaze interpretation
+       - intent understanding
+       - user profile/memory lookup
+       - emotional state inference
+       - output generation
+       - communication routing
+7. Gateway returns a route decision payload to the demo.
+8. Demo speaks returned message (browser TTS/audio URL path if present).
+9. Demo writes telemetry to backend:
+       - `POST /history` for message history
+       - `POST /phrases` for phrase memory
+10. On summary, demo uploads video to Cloudinary and calls `POST /session/end`.
+11. Backend analyzes transcript + extracted Cloudinary frames with Gemini and stores summary.
+
+## gaze-engine internals
+
+The library code in `gaze-engine/src` is designed to be UI-agnostic:
+
+- `index.ts`
+      - Exposes `GazeEngine` and calibration helpers
+      - Owns lifecycle (`start`, `stop`) and event subscriptions
+- `tracker.ts`
+      - `WebGazerSource` for browser runtime
+      - `MockGazeSource` for tests and harness playback
+- `filter.ts`
+      - Confidence gating + EMA smoothing
+- `dwell.ts`
+      - Rectangle hit-testing + dwell timing + single-fire re-entry behavior
+- `calibration.ts`
+      - Linear fit + IDW blending calibration profile
+- `types.ts`
+      - Engine config and callback types
+
+## Runtime services and ports
+
+- Gaze demo (Vite): `http://localhost:5173` (default)
+- Agent gateway (FastAPI): `http://localhost:8000`
+- Backend API (Express): `http://localhost:3001`
+
+## Setup and run
+
+Use 3 terminals at minimum.
+
+### 1) Backend
 
 ```bash
 cd backend
 npm install
+cp .env.example .env
+# Fill required values (MongoDB URI, API keys)
 npm run dev
 ```
 
-### Terminal 2 — Agent gateway (port 8000)
+### 2) Agent gateway
 
 ```bash
 cd agents
-pip3 install fastapi python-dotenv
-python3 http_gateway.py
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python http_gateway.py
 ```
 
-### Terminal 3 — Gaze-engine demo (port 5173)
+Notes:
+
+- If requirements are incomplete on your machine, install `fastapi`, `python-dotenv`, `openai`, `uvicorn`, and `httpx`.
+- Gateway attempts backend profile/history lookup when backend is available.
+
+### 3) gaze-engine demo (main entrypoint)
 
 ```bash
 cd gaze-engine
@@ -94,45 +169,85 @@ npm install
 npm run dev
 ```
 
-Open **http://localhost:5173**, click "Start with Webcam", complete the 7-point calibration, select a mode (Talk or Help), then communicate by looking.
+Then open the Vite URL and run:
 
----
+1. Start webcam
+2. Calibrate
+3. Select Talk or Help
+4. Use dwell interactions to communicate
 
-## User flow
+## Environment variables
 
-```
-Landing → Calibration (7 dots) → Mode Select → Board
-```
+### backend/.env
 
-### Talk mode
-Build sentences word by word using gaze. Words update automatically using AI-powered next-word prediction. Dwell on **SEND** to fire the agent pipeline — a spoken + text response appears. Keyboard shortcuts: `Space` = Send, `Backspace` = Undo.
+Current code references:
 
-### Help mode
-5 instant-speak tiles (🆘 Help me · 😣 In Pain · 💧 Water · 🍽️ Food · 🚽 Bathroom). Look at a tile and it speaks immediately — no SEND needed. Toggle between Talk and Help at any time using the mode switch in the board header.
+- `MONGODB_URI`
+- `PORT` (default 3001)
+- `GEMINI_API_KEY` (embeddings + session analysis)
+- Optional Twilio keys in `src/routes/sms.ts`:
+      - `TWILIO_ACCOUNT_SID`
+      - `TWILIO_AUTH_TOKEN`
+      - `TWILIO_PHONE_NUMBER`
 
-### Session Summary
-Press **📋 Summary** at any time to generate a Gemini-powered session analysis (emotional arc, clinical notes, key moments). The engine keeps running — close the modal and continue communicating. Each mode keeps its own summary.
+### agents/.env
 
----
+Current code references:
 
-## Gaze engine details
+- `ASI1_API_KEY`
+- `BACKEND_URL` (default `http://localhost:3001`)
+- `GEMINI_API_KEY` (optional fallback/primary for `/predict` path)
+- Agent mailbox keys and seeds (for uAgents registration paths)
 
-- **Tracking:** MediaPipe FaceLandmarker — iris position relative to eye width
-- **Calibration:** 7-point grid, IDW + linear blend for edge extrapolation
-- **Smoothing:** Two-stage filter — EMA (`filterAlpha: 0.08`) removes tremor; fixation zone (14px dead-zone) locks cursor when eye is still
-- **Dwell:** 1500ms of stable gaze triggers selection with circular progress ring feedback
-- **Hit areas:** SEND/UNDO extend to full screen edges; toggle buttons have 52px extra padding each side
+## API touchpoints used by gaze-engine demo
 
----
+From `gaze-engine/demo/main.ts`:
 
-## Branch conventions
+- `POST http://localhost:8000/predict`
+      - Input: current composed text
+      - Output: 4 weighted next words
+- `POST http://localhost:8000/intent`
+      - Input: selected phrase/tile context
+      - Output: route decision + generated response
+- `POST http://localhost:3001/history`
+      - Logs sent or spoken message history
+- `POST http://localhost:3001/phrases`
+      - Stores phrases for future prediction context
+- `POST http://localhost:3001/session/end`
+      - Returns session summary (or 400 if no messages)
 
-```
-main              ← stable, judges-facing
-newversion9pm     ← previous working version
-newversion3am     ← current (EyeText rebrand, Talk/Help modes, gaze improvements)
-task1-gaze        ← Owner A
-task2-agents      ← Owner B
-task3-cdn         ← Owner C
-task4-backend     ← Owner D
-```
+## Testing and utility scripts
+
+- `gaze-engine`
+      - `npm test`
+      - `npm run harness`
+- `backend`
+      - `npm test`
+      - `npm run dev`
+- `cloudinary-assets`
+      - `npm run upload`
+      - `npm run manifest`
+      - `npm run verify`
+
+## Important implementation notes
+
+- The gaze demo currently imports recording/upload utilities from `claudinary-video` (spelling with "clau").
+- There is also a `cloudinary-video` package with overlapping video-analysis concerns.
+- `shared/api-contract.md` is useful as a design reference, but live route payloads should be verified against implementation in `backend/src/routes/*` and `agents/http_gateway.py`.
+- The main user journey is in `gaze-engine/demo/main.ts`; the React app in `frontend/` is a separate UI surface.
+
+## Quick troubleshooting
+
+- If word predictions are empty:
+      - confirm `agents/http_gateway.py` is running on port 8000
+      - check ASI/Gemini keys for model calls
+- If history/dashboard is empty:
+      - confirm backend is running on 3001
+      - verify `POST /history` returns 201
+- If summary fails:
+      - send at least one message first
+      - confirm Cloudinary upload succeeds or expect text-only fallback
+
+## License
+
+See `LICENSE`.
