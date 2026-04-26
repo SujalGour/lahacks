@@ -873,29 +873,32 @@ function wireButtons(engine: GazeEngine) {
     document.getElementById('gaze-cursor')!.style.display = 'none';
     engine.stop();
 
+    // Render local summary immediately so the modal is never blank
+    loadingEl.classList.add('hidden');
+    if (state.events.length === 0 && state.messages.length === 0) {
+      contentEl.innerHTML = `<p style="text-align:center;color:var(--text-muted);padding:20px 0;">No activity recorded in ${currentMode} mode yet.</p>`;
+      return;
+    }
+    contentEl.innerHTML = renderSummary(localFallbackSummary(state));
+
+    // Kick off AI analysis if not already running, then update with richer result
     if (!state.summaryPromise) {
-      if (state.events.length === 0) {
-        loadingEl.classList.add('hidden');
-        contentEl.innerHTML = `<p style="text-align:center;color:var(--text-muted);padding:20px 0;">No activity recorded in ${currentMode} mode yet.</p>`;
-        return;
-      }
       state.summaryPromise = generateSummary(state);
     }
 
+    // Show spinner over the local summary while waiting for AI
     loadingEl.classList.remove('hidden');
-    contentEl.innerHTML = '';
 
     state.summaryPromise
       .then(summary => {
-        if (modal.classList.contains('hidden')) return;
         loadingEl.classList.add('hidden');
-        contentEl.innerHTML = renderSummary(summary);
+        if (!modal.classList.contains('hidden')) {
+          contentEl.innerHTML = renderSummary(summary);
+        }
       })
       .catch(err => {
         console.error('[summary]', err);
-        if (modal.classList.contains('hidden')) return;
         loadingEl.classList.add('hidden');
-        contentEl.innerHTML = renderSummary(localFallbackSummary(state));
       });
   });
 
