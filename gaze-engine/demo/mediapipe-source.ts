@@ -108,6 +108,15 @@ export class MediaPipeGazeSource implements GazeSource {
           return;
         }
 
+        // Blink detection — EAR (eye aspect ratio) drops below ~0.18 when lid closes
+        const MIN_EAR = 0.18;
+        const lEAR = Math.abs(lm[L_TOP].y - lm[L_BOT].y) / lW;
+        const rEAR = Math.abs(lm[R_TOP].y - lm[R_BOT].y) / rW;
+        if (lEAR < MIN_EAR || rEAR < MIN_EAR) {
+          this.rafId = requestAnimationFrame(() => this.loop());
+          return;
+        }
+
         // ── Normalised iris offset ──────────────────────────────────────────
         // This is the actual gaze signal. Moving the iris right/left within the
         // eye socket is what changes when you look at different screen positions.

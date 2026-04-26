@@ -428,13 +428,14 @@ html, body {
 /* ── Help mode grid ───────────────────────────────────────────────────────── */
 
 #word-grid.help-mode {
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: 0.65fr repeat(6, 1fr);
   grid-template-rows: 1fr 1fr;
 }
 
 #word-grid.help-mode .help-tile { grid-column: span 2; }
-#word-grid.help-mode .help-tile:nth-child(4) { grid-column: 2 / span 2; }
-#word-grid.help-mode .help-tile:nth-child(5) { grid-column: 4 / span 2; }
+/* Row 2 — centre the two bottom tiles within columns 2-7 */
+#word-grid.help-mode .help-tile:nth-child(4) { grid-column: 3 / span 2; }
+#word-grid.help-mode .help-tile:nth-child(5) { grid-column: 5 / span 2; }
 
 /* ── Base tile ────────────────────────────────────────────────────────────── */
 

@@ -59,9 +59,10 @@ export class DwellDetector {
     }
 
     const elapsed = point.timestamp - this.dwellStart;
-    const progress = Math.min(elapsed / this.dwellMs, 1);
+    const perTargetMs = hit?.dwellMs ?? this.dwellMs;
+    const progress = Math.min(elapsed / perTargetMs, 1);
 
-    if (elapsed >= this.dwellMs && !this.fired.has(hitId)) {
+    if (elapsed >= perTargetMs && !this.fired.has(hitId)) {
       this.fired.add(hitId);
       this.onSelect(hitId, hit!);
     }

@@ -16,6 +16,7 @@ export interface Target {
   id: string;
   rect: TargetRect;
   label?: string;
+  dwellMs?: number; // override global dwellMs for this target only
 }
 
 export interface CalibrationSample {

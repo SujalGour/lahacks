@@ -1,6 +1,4 @@
-import { GazeEngine, buildCalibrationProfile } from '@catalyst/gaze-engine';
-import type { GazeSource, CalibrationSample, CalibrationProfile } from '@catalyst/gaze-engine';
-import { MediaPipeGazeSource } from './mediapipe-source';
+import { GazeEngine, WebGazerSource, generateCalibrationGrid } from '@catalyst/gaze-engine';
 import { SessionRecorder } from '../../claudinary-video/src/recorder';
 import { uploadToCloudinary } from '../../claudinary-video/src/uploader';
 import type { SessionEvent, SessionData, SessionSummary } from '../../claudinary-video/src/types';
@@ -97,8 +95,6 @@ const HELP_TILES = [
   { id: 'help-4', emoji: '🚽', label: 'Bathroom',  speech: 'I need to use the bathroom.' },
 ];
 
-const HELP_TILE_IDS = HELP_TILES.map(t => t.id);
-
 // ── Agent response ────────────────────────────────────────────────────────────
 
 function showAgentResponse(text: string) {
@@ -137,97 +133,48 @@ function showScreen(id: string) {
 
 // ── Calibration ───────────────────────────────────────────────────────────────
 
-const CALIB_GRID = [
-  { x: 0.1, y: 0.2  }, { x: 0.5, y: 0.2  }, { x: 0.9, y: 0.2  },
-  { x: 0.08, y: 0.55 },                       { x: 0.92, y: 0.55 },
-  { x: 0.1, y: 0.87 },                        { x: 0.9, y: 0.87 },
-];
-const HOLD_MS = 1000;
-const CALIB_PRE_DELAY_MS = 250;
-const POLL_MS = 33;
-
-function runWebcamCalibration(source: MediaPipeGazeSource): Promise<CalibrationSample[]> {
-  const samples: CalibrationSample[] = [];
-
+function runWebcamCalibration(): Promise<void> {
   return new Promise(resolve => {
+    const pts = generateCalibrationGrid(window.innerWidth, window.innerHeight, 3);
     const surface    = document.getElementById('calib-surface')!;
     const progressEl = document.getElementById('calib-progress')!;
     surface.innerHTML = '';
 
-    const dots = CALIB_GRID.map((pos) => {
+    const dots = pts.map(pos => {
       const dot = document.createElement('div');
       dot.className = 'calib-dot';
-      dot.style.left = `${pos.x * 100}vw`;
-      dot.style.top  = `${pos.y * 100}vh`;
+      dot.style.left = `${pos.x}px`;
+      dot.style.top  = `${pos.y}px`;
       surface.appendChild(dot);
       return dot;
     });
 
     document.querySelector('.calib-counter')!.innerHTML =
-      `Point <span id="calib-n">1</span> / ${CALIB_GRID.length}`;
+      `Point <span id="calib-n">1</span> / ${pts.length}`;
     const nEl = document.getElementById('calib-n')!;
 
     let current = 0;
-    let capturing = false;
     dots[0].classList.add('active');
-    progressEl.textContent = 'Click the dot, then hold still';
+    progressEl.textContent = 'Click the dot while looking at it';
 
     const advance = () => {
-      capturing = false;
-      dots[current].classList.remove('active', 'capturing');
+      dots[current].classList.remove('active');
       dots[current].classList.add('done');
       current++;
-      if (current >= CALIB_GRID.length) {
+      if (current >= pts.length) {
         surface.innerHTML = '';
-        resolve(samples);
+        resolve();
         return;
       }
       nEl.textContent = String(current + 1);
-      progressEl.textContent = 'Click the dot, then hold still';
       dots[current].classList.add('active');
     };
 
-    const startCapture = (i: number) => {
-      if (i !== current || capturing) return;
-      capturing = true;
-      const pos = CALIB_GRID[i];
-      const rawBuf: Array<{ x: number; y: number }> = [];
-      dots[i].classList.add('capturing');
-      progressEl.textContent = 'Holding… keep your gaze steady';
-
-      let timer: ReturnType<typeof setInterval>;
-      setTimeout(() => {
-        timer = setInterval(() => {
-          const raw = source.lastRaw;
-          if (raw) rawBuf.push({ x: raw.x, y: raw.y });
-        }, POLL_MS);
-      }, CALIB_PRE_DELAY_MS);
-
-      setTimeout(() => {
-        clearInterval(timer!);
-        if (rawBuf.length >= 3) {
-          const cx = rawBuf.reduce((s, p) => s + p.x, 0) / rawBuf.length;
-          const cy = rawBuf.reduce((s, p) => s + p.y, 0) / rawBuf.length;
-          const sorted = [...rawBuf].sort(
-            (a, b) => (a.x-cx)**2 + (a.y-cy)**2 - ((b.x-cx)**2 + (b.y-cy)**2)
-          );
-          const kept = sorted.slice(0, Math.max(1, Math.floor(sorted.length * 0.8)));
-          samples.push({
-            screenX:  pos.x * window.innerWidth,
-            screenY:  pos.y * window.innerHeight,
-            rawGazeX: kept.reduce((s, p) => s + p.x, 0) / kept.length,
-            rawGazeY: kept.reduce((s, p) => s + p.y, 0) / kept.length,
-          });
-        }
-        advance();
-      }, HOLD_MS);
-    };
-
-    dots.forEach((dot, i) => dot.addEventListener('click', () => startCapture(i)));
+    dots.forEach(dot => dot.addEventListener('click', advance, { once: true }));
 
     document.getElementById('btn-skip-calib')!.addEventListener('click', () => {
       surface.innerHTML = '';
-      resolve(samples);
+      resolve();
     }, { once: true });
   });
 }
@@ -356,11 +303,20 @@ function registerTalkTargets(engine: GazeEngine) {
 }
 
 function registerHelpTargets(engine: GazeEngine) {
+  const H = window.innerHeight;
+
+  // SEND — full-height left column hit area, same as talk mode
+  const sendEl = document.getElementById(CTRL_SEND);
+  if (sendEl) {
+    const r = sendEl.getBoundingClientRect();
+    engine.registerTarget({ id: CTRL_SEND, rect: { x: 0, y: 0, width: r.right + 20, height: H }, label: CTRL_SEND });
+  }
+
   for (const t of HELP_TILES) {
     const el = document.getElementById(t.id);
     if (!el) continue;
     const r = el.getBoundingClientRect();
-    engine.registerTarget({ id: t.id, rect: { x: r.left - 10, y: r.top - 10, width: r.width + 20, height: r.height + 20 }, label: t.label });
+    engine.registerTarget({ id: t.id, rect: { x: r.left - 10, y: r.top - 10, width: r.width + 20, height: r.height + 20 }, label: t.label, dwellMs: 2500 });
   }
 
   registerHeaderTargets(engine);
@@ -410,6 +366,13 @@ function buildHelpBoard(engine: GazeEngine) {
     el.innerHTML = makeHelpTileHTML(t.emoji, t.label);
     grid.appendChild(el);
   });
+
+  // SEND sits in the left column (same position as talk mode)
+  const send = document.createElement('div');
+  send.className = 'tile ctrl-tile ctrl-send';
+  send.id = CTRL_SEND;
+  send.innerHTML = makeTileHTML('SEND ▶');
+  grid.appendChild(send);
 
   requestAnimationFrame(() => registerHelpTargets(engine));
 }
@@ -648,15 +611,8 @@ async function generateSummary(state: ModeState): Promise<SessionSummary | null>
 
 // ── Board launcher ────────────────────────────────────────────────────────────
 
-async function startBoard(source: GazeSource, calibration?: CalibrationProfile): Promise<GazeEngine> {
+async function startBoard(engine: GazeEngine): Promise<GazeEngine> {
   composedText = '';
-
-  // Lower filterAlpha = more EMA smoothing at the source level
-  const engine = new GazeEngine(
-    { dwellMs: 1500, confidenceThreshold: 0.25, filterAlpha: 0.08, xGain: 0.75 },
-    source,
-  );
-  if (calibration) engine.loadCalibrationProfile(calibration);
 
   const cursor = document.getElementById('gaze-cursor')!;
   const debugEl = document.getElementById('gaze-debug')!;
@@ -667,7 +623,7 @@ async function startBoard(source: GazeSource, calibration?: CalibrationProfile):
   // prevents the cursor drifting when the eye is actually still.
   // Within FIXATION_RADIUS px the cursor barely moves (slow drift-correction).
   // Beyond it, the cursor chases the gaze proportionally fast.
-  const FIXATION_RADIUS = 14; // px — dead-zone while fixating
+  const FIXATION_RADIUS = 22; // px — dead-zone while fixating
   let curX = window.innerWidth  / 2;
   let curY = window.innerHeight / 2;
 
@@ -677,19 +633,18 @@ async function startBoard(source: GazeSource, calibration?: CalibrationProfile):
     const dist = Math.sqrt(dx * dx + dy * dy);
 
     if (dist > FIXATION_RADIUS) {
-      // Saccade detected — move cursor at speed proportional to distance
-      const speed = Math.min(0.55, 0.15 + (dist - FIXATION_RADIUS) / FIXATION_RADIUS * 0.35);
+      // Outside dead-zone — move toward gaze slowly; cap keeps it from leaping on noise
+      const speed = Math.min(0.15, Math.max(0.03, (dist - FIXATION_RADIUS) / 300));
       curX += dx * speed;
       curY += dy * speed;
     } else {
-      // Fixation zone — tiny drift-correction so cursor doesn't freeze forever
-      curX += dx * 0.025;
-      curY += dy * 0.025;
+      // Inside dead-zone — almost no movement so cursor stays put during fixation
+      curX += dx * 0.02;
+      curY += dy * 0.02;
     }
 
     moveCursor(curX, curY);
-    const raw = (mpSource as MediaPipeGazeSource | null)?.lastRaw;
-    if (raw) debugEl.textContent = `raw x:${raw.x.toFixed(3)} y:${raw.y.toFixed(3)}  →  screen x:${Math.round(curX)} y:${Math.round(curY)}`;
+    debugEl.textContent = `screen x:${Math.round(curX)} y:${Math.round(curY)}`;
   });
 
   let lastDwellId: string | null = null;
@@ -756,8 +711,6 @@ async function startBoard(source: GazeSource, calibration?: CalibrationProfile):
     else registerHelpTargets(engine);
   });
 
-  await engine.start();
-
   // ── Mode selection screen ─────────────────────────────────────────────────
   showScreen('screen-mode-select');
 
@@ -798,13 +751,12 @@ async function startBoard(source: GazeSource, calibration?: CalibrationProfile):
 
 // ── Button wiring ─────────────────────────────────────────────────────────────
 
-let mpSource: MediaPipeGazeSource | null = null;
 let activeEngine: GazeEngine | null = null;
 
 wireKeyboard(() => activeEngine);
 
-function wireButtons(engine: GazeEngine, calibration: CalibrationProfile | undefined) {
-  ['btn-back', 'btn-recalibrate', 'btn-bye'].forEach(btnId => {
+function wireButtons(engine: GazeEngine) {
+  ['btn-back', 'btn-recalibrate', 'btn-bye', 'btn-toggle-talk', 'btn-toggle-help'].forEach(btnId => {
     const old = document.getElementById(btnId)!;
     const fresh = old.cloneNode(true) as HTMLElement;
     old.parentNode!.replaceChild(fresh, old);
@@ -813,13 +765,10 @@ function wireButtons(engine: GazeEngine, calibration: CalibrationProfile | undef
   document.getElementById('btn-back')!.addEventListener('click', () => {
     engine.stop();
     activeEngine = null;
-    mpSource?.shutdown();
-    mpSource = null;
     document.getElementById('gaze-cursor')!.style.display = 'none';
     const btn = document.getElementById('btn-webcam') as HTMLButtonElement;
     btn.textContent = '📷 Start with Webcam →';
     btn.disabled = false;
-    // Reset per-mode state for next session
     talkState.events = []; talkState.messages = []; talkState.summaryPromise = null;
     helpState.events = []; helpState.messages = []; helpState.summaryPromise = null;
     showScreen('screen-landing');
@@ -827,12 +776,16 @@ function wireButtons(engine: GazeEngine, calibration: CalibrationProfile | undef
 
   document.getElementById('btn-recalibrate')!.addEventListener('click', async () => {
     engine.stop();
-    if (!mpSource) return;
     showScreen('screen-calibration');
-    const newSamples = await runWebcamCalibration(mpSource);
-    const newCal = newSamples.length >= 2 ? buildCalibrationProfile(newSamples) : calibration;
-    const newEngine = await startBoard(mpSource, newCal);
-    wireButtons(newEngine, newCal);
+    const newSource = new WebGazerSource();
+    const newEngine = new GazeEngine(
+      { dwellMs: 1500, confidenceThreshold: 0.5, filterAlpha: 0.08 },
+      newSource,
+    );
+    await newEngine.start();
+    await runWebcamCalibration();
+    const builtEngine = await startBoard(newEngine);
+    wireButtons(builtEngine);
   });
 
   document.getElementById('btn-bye')!.addEventListener('click', async () => {
@@ -843,6 +796,7 @@ function wireButtons(engine: GazeEngine, calibration: CalibrationProfile | undef
 
     modal.classList.remove('hidden');
     document.getElementById('gaze-cursor')!.style.display = 'none';
+    engine.stop();
 
     if (!state.summaryPromise) {
       if (state.messages.length === 0) {
@@ -872,6 +826,14 @@ function wireButtons(engine: GazeEngine, calibration: CalibrationProfile | undef
         contentEl.innerHTML = `<p class="summary-error">Could not generate summary: ${String(err)}</p>`;
       });
   });
+
+  document.getElementById('btn-toggle-talk')!.addEventListener('click', () => {
+    switchMode('talk', engine);
+  });
+
+  document.getElementById('btn-toggle-help')!.addEventListener('click', () => {
+    switchMode('help', engine);
+  });
 }
 
 // ── Keyboard shortcuts ────────────────────────────────────────────────────────
@@ -897,7 +859,7 @@ function wireKeyboard(getEngine: () => GazeEngine | null) {
 document.getElementById('btn-close-summary')!.addEventListener('click', () => {
   document.getElementById('summary-modal')!.classList.add('hidden');
   document.getElementById('gaze-cursor')!.style.display = 'block';
-  // Engine continues running — user returns to board
+  activeEngine?.start();
 });
 
 document.getElementById('btn-webcam')!.addEventListener('click', async () => {
@@ -910,26 +872,43 @@ document.getElementById('btn-webcam')!.addEventListener('click', async () => {
   setStatus('Initializing…');
 
   try {
-    const statusEl = document.getElementById('calib-instruction');
-    mpSource = new MediaPipeGazeSource();
+    // Load WebGazer lazily on first use
+    if (!(globalThis as any).webgazer) {
+      setStatus('Loading eye tracker…');
+      await new Promise<void>((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://unpkg.com/webgazer@2.1.0/dist/webgazer.js';
+        s.onload = () => resolve();
+        s.onerror = () => reject(new Error('Failed to load WebGazer'));
+        document.head.appendChild(s);
+      });
+    }
+
+    const source = new WebGazerSource();
+    const engine = new GazeEngine(
+      { dwellMs: 1500, confidenceThreshold: 0.5, filterAlpha: 0.08 },
+      source,
+    );
+
+    setStatus('Starting camera…');
+    await engine.start();
+
+    // Grab WebGazer's camera stream for session recording
+    await new Promise(r => setTimeout(r, 500));
+    const wgVideo = (globalThis as any).webgazer?.getVideoElement?.() as HTMLVideoElement | null;
+    const stream = wgVideo?.srcObject as MediaStream | null;
+    if (stream) recorder.start(stream);
+
     showScreen('screen-calibration');
-    await mpSource.init(statusEl);
+    await runWebcamCalibration();
 
-    if (mpSource.stream) recorder.start(mpSource.stream);
-
-    const samples = await runWebcamCalibration(mpSource);
-    const calibration = samples.length >= 2 ? buildCalibrationProfile(samples) : undefined;
-    if (!calibration) console.warn('Too few calibration samples — gaze will be uncalibrated');
-
-    const engine = await startBoard(mpSource, calibration);
-    wireButtons(engine, calibration);
+    const finalEngine = await startBoard(engine);
+    wireButtons(finalEngine);
 
   } catch (err) {
     console.error('Webcam init failed:', err);
     const msg = err instanceof Error ? err.message : String(err);
     setStatus(`⚠ ${msg.slice(0, 55)}`, false);
-    mpSource?.shutdown();
-    mpSource = null;
     showScreen('screen-landing');
     setTimeout(() => setStatus('📷 Start with Webcam →', false), 4000);
   }
