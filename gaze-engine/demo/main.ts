@@ -133,6 +133,26 @@ function showScreen(id: string) {
 
 // ── Calibration ───────────────────────────────────────────────────────────────
 
+function showCalibrationVideo(): void {
+  const wg = (globalThis as any).webgazer;
+  if (!wg) return;
+  wg.showVideo(true);
+  const v = wg.getVideoElement?.() as HTMLVideoElement | null;
+  if (!v) return;
+  v.style.position = 'fixed';
+  v.style.left = '50%';
+  v.style.top = '50%';
+  v.style.transform = 'translate(-50%, -50%)';
+  v.style.width = '240px';
+  v.style.height = '180px';
+  v.style.borderRadius = '14px';
+  v.style.border = '2.5px solid #E87240';
+  v.style.objectFit = 'cover';
+  v.style.zIndex = '590';
+  v.style.display = 'block';
+  v.style.pointerEvents = 'none';
+}
+
 function runWebcamCalibration(): Promise<void> {
   return new Promise(resolve => {
     const pts = generateCalibrationGrid(window.innerWidth, window.innerHeight, 3);
@@ -155,11 +175,13 @@ function runWebcamCalibration(): Promise<void> {
 
     let current = 0;
     dots[0].classList.add('active');
-    progressEl.textContent = 'Click the dot while looking at it';
+    progressEl.textContent = 'Click the dot, then hold still';
 
     const finishCalibration = () => {
       // Freeze WebGazer's model — stop training from subsequent mouse events
       (globalThis as any).webgazer?.removeMouseEventListeners?.();
+      // Hide camera preview now that calibration is done
+      (globalThis as any).webgazer?.showVideo?.(false);
       surface.innerHTML = '';
       resolve();
     };
@@ -790,6 +812,7 @@ function wireButtons(engine: GazeEngine) {
       newSource,
     );
     await newEngine.start();
+    showCalibrationVideo();
     await runWebcamCalibration();
     const builtEngine = await startBoard(newEngine);
     wireButtons(builtEngine);
@@ -908,6 +931,7 @@ document.getElementById('btn-webcam')!.addEventListener('click', async () => {
     if (stream) recorder.start(stream);
 
     showScreen('screen-calibration');
+    showCalibrationVideo();
     await runWebcamCalibration();
 
     const finalEngine = await startBoard(engine);

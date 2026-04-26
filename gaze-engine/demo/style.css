@@ -135,7 +135,10 @@ html, body {
 
 #screen-calibration {
   align-items: center;
-  background: var(--bg);
+  background:
+    radial-gradient(ellipse 60% 55% at 80% 50%, rgba(0,148,184,0.07) 0%, transparent 70%),
+    radial-gradient(ellipse 40% 60% at 10% 80%, rgba(232,114,64,0.08) 0%, transparent 65%),
+    var(--bg);
 }
 
 .calib-header {

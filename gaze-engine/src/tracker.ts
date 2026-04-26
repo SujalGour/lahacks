@@ -36,7 +36,6 @@ export class WebGazerSource implements GazeSource {
       .showPredictionPoints(false)
       .showFaceOverlay(false)
       .showFaceFeedbackBox(false)
-      .showVideo(false)
       .setGazeListener(
         (data: { x: number; y: number } | null, elapsedTime: number) => {
           if (!data) return;
