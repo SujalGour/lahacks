@@ -21,9 +21,9 @@ load_dotenv()
 
 AGENTS = [
     {
-        "name": "GazeInterpretationAgent",
-        "script": "gaze_interpretation_agent.py",
-        "key_env": "GAZE_AGENT_MAILBOX_KEY",
+        "name": "GazeIntentAgent",
+        "script": "gaze_intent_agent.py",
+        "key_env": "GAZE_INTENT_AGENT_MAILBOX_KEY",
         "port": 8001,
     },
     {
