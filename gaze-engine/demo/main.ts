@@ -87,16 +87,17 @@ function updateDisplay() {
 function showScreen(id: string) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.getElementById(id)!.classList.add('active');
+  document.body.dataset.screen = id;
 }
 
 // ── Calibration ───────────────────────────────────────────────────────────────
 
+// 6-point grid: top row + bottom row, center clear for the video preview
 const CALIB_GRID = [
   { x: 0.1, y: 0.1 }, { x: 0.5, y: 0.1 }, { x: 0.9, y: 0.1 },
-  { x: 0.1, y: 0.5 }, { x: 0.5, y: 0.5 }, { x: 0.9, y: 0.5 },
   { x: 0.1, y: 0.9 }, { x: 0.5, y: 0.9 }, { x: 0.9, y: 0.9 },
 ];
-const HOLD_MS = 600;
+const HOLD_MS = 1000; // longer hold = more stable calibration samples
 const POLL_MS = 33;
 
 function runWebcamCalibration(source: MediaPipeGazeSource): Promise<CalibrationSample[]> {
@@ -211,6 +212,7 @@ const WORD_TILE_IDS = ['word0', 'word1', 'word2', 'word3'];
 const CTRL_UNDO = 'ctrl-UNDO';
 const CTRL_SEND = 'ctrl-SEND';
 const ALL_TILE_IDS = [...WORD_TILE_IDS, CTRL_UNDO, CTRL_SEND];
+const HEADER_BTN_IDS = ['btn-back', 'btn-recalibrate', 'btn-bye'];
 
 function makeTileHTML(label: string): string {
   return `
@@ -275,6 +277,13 @@ function buildBoard(engine: GazeEngine) {
         rect: { x: r.left - 10, y: r.top - 10, width: r.width + 20, height: r.height + 20 },
         label: id,
       });
+    }
+    // Header buttons get a larger hit area so they're reachable by gaze
+    for (const id of HEADER_BTN_IDS) {
+      const el = document.getElementById(id);
+      if (!el) continue;
+      const r = el.getBoundingClientRect();
+      engine.registerTarget({ id, rect: { x: r.left - 24, y: r.top - 24, width: r.width + 48, height: r.height + 48 }, label: id });
     }
     refreshWordTiles(engine);
   });
@@ -381,7 +390,7 @@ async function startBoard(source: GazeSource, calibration?: CalibrationProfile):
   composedText = '';
 
   const engine = new GazeEngine(
-    { dwellMs: 1200, confidenceThreshold: 0.3, filterAlpha: 0.5 },
+    { dwellMs: 2000, confidenceThreshold: 0.3, filterAlpha: 0.25 },
     source,
   );
   if (calibration) engine.loadCalibrationProfile(calibration);
@@ -397,6 +406,11 @@ async function startBoard(source: GazeSource, calibration?: CalibrationProfile):
   engine.onDwellProgress((id, progress) => {
     const el = document.getElementById(id);
     if (!el) return;
+    // Header buttons: highlight border as dwell indicator
+    if (HEADER_BTN_IDS.includes(id)) {
+      el.classList.toggle('btn-dwelling', progress > 0);
+      return;
+    }
     if (el.dataset.word === '' && WORD_TILE_IDS.includes(id)) return;
     const fill = el.querySelector('.ring-fill') as SVGCircleElement | null;
     if (fill) fill.style.strokeDashoffset = String(CIRC * (1 - progress));
@@ -404,6 +418,11 @@ async function startBoard(source: GazeSource, calibration?: CalibrationProfile):
   });
 
   engine.onSelect((id) => {
+    // Header buttons — fire their click handler
+    if (HEADER_BTN_IDS.includes(id)) {
+      document.getElementById(id)?.click();
+      return;
+    }
     const el = document.getElementById(id);
     if (!el) return;
     if (el.dataset.word === '' && WORD_TILE_IDS.includes(id)) return;
@@ -423,6 +442,12 @@ async function startBoard(source: GazeSource, calibration?: CalibrationProfile):
       if (!el) continue;
       const r = el.getBoundingClientRect();
       engine.registerTarget({ id, rect: { x: r.left-10, y: r.top-10, width: r.width+20, height: r.height+20 }, label: id });
+    }
+    for (const id of HEADER_BTN_IDS) {
+      const el = document.getElementById(id);
+      if (!el) continue;
+      const r = el.getBoundingClientRect();
+      engine.registerTarget({ id, rect: { x: r.left-24, y: r.top-24, width: r.width+48, height: r.height+48 }, label: id });
     }
   });
 
