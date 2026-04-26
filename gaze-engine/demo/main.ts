@@ -1,6 +1,6 @@
-import { GazeEngine, buildCalibrationProfile } from '@catalyst/gaze-engine';
-import type { GazeSource, GazeCallback, CalibrationSample, CalibrationProfile } from '@catalyst/gaze-engine';
-import { MediaPipeGazeSource } from './mediapipe-source';
+import { GazeEngine } from '@catalyst/gaze-engine';
+import type { GazeSource } from '@catalyst/gaze-engine';
+import { WebGazerGazeSource } from './webgazer-source';
 
 // ── Next-word transition table ────────────────────────────────────────────────
 // Key = last 1–2 words of composed text (uppercase). Value = 4 suggestions.
@@ -75,93 +75,90 @@ function showScreen(id: string) {
 
 // ── Calibration ───────────────────────────────────────────────────────────────
 
+// 9-point grid — index 4 is center (hidden until the 8 outer points are done)
 const CALIB_GRID = [
-  { x: 0.1, y: 0.1 }, { x: 0.5, y: 0.1 }, { x: 0.9, y: 0.1 },
-  { x: 0.1, y: 0.5 }, { x: 0.5, y: 0.5 }, { x: 0.9, y: 0.5 },
-  { x: 0.1, y: 0.9 }, { x: 0.5, y: 0.9 }, { x: 0.9, y: 0.9 },
+  { x: 0.05, y: 0.07 }, { x: 0.5, y: 0.07 }, { x: 0.95, y: 0.07 },
+  { x: 0.05, y: 0.5  }, { x: 0.5, y: 0.5  }, { x: 0.95, y: 0.5  },
+  { x: 0.05, y: 0.93 }, { x: 0.5, y: 0.93 }, { x: 0.95, y: 0.93 },
 ];
-const HOLD_MS = 300;
-const POLL_MS = 33;
+const CLICKS_PER_DOT = 5; // matches the official WebGazer demo
 
-function runWebcamCalibration(source: MediaPipeGazeSource): Promise<CalibrationSample[]> {
-  const samples: CalibrationSample[] = [];
-
+/**
+ * Brown-University-style calibration:
+ * - All 9 dots shown at once; user clicks them in any order.
+ * - Center dot (index 4) hidden until the 8 outer dots are done.
+ * - Each dot needs CLICKS_PER_DOT clicks; opacity ramps up with each click,
+ *   turns accent colour when complete.
+ * - WebGazer is already running (not paused), so every click is recorded
+ *   as a training sample automatically.
+ */
+function runCalibration(): Promise<void> {
   return new Promise(resolve => {
     const surface    = document.getElementById('calib-surface')!;
-    const nEl        = document.getElementById('calib-n')!;
+    const counterEl  = document.querySelector('.calib-counter') as HTMLElement | null;
     const progressEl = document.getElementById('calib-progress')!;
     surface.innerHTML = '';
+
+    if (counterEl) counterEl.style.display = 'none'; // counter is meaningless with all-at-once
+
+    const calibClicks = new Array(CALIB_GRID.length).fill(0);
+    let pointsDone = 0;
+
+    progressEl.textContent = `Click each dot ${CLICKS_PER_DOT} times while looking at it`;
 
     const dots = CALIB_GRID.map((pos, i) => {
       const dot = document.createElement('div');
       dot.className = 'calib-dot';
-      dot.style.left = `${pos.x * 100}vw`;
-      dot.style.top  = `${pos.y * 100}vh`;
-      if (i !== 0) dot.style.opacity = '0.3';
+      dot.style.left    = `${pos.x * 100}vw`;
+      dot.style.top     = `${pos.y * 100}vh`;
+      dot.style.opacity = '0.2';
+      // Center dot hidden until the 8 outer dots are done
+      if (i === 4) dot.style.display = 'none';
       surface.appendChild(dot);
       return dot;
     });
 
-    let current = 0;
-    let capturing = false;
-    dots[0].classList.add('active');
-    nEl.textContent = '1';
-    progressEl.textContent = 'Click the dot, then hold still';
+    dots.forEach((dot, i) => {
+      dot.addEventListener('click', () => {
+        if (calibClicks[i] >= CLICKS_PER_DOT) return; // already done
+        calibClicks[i]++;
 
-    const advance = () => {
-      capturing = false;
-      dots[current].classList.remove('active', 'capturing');
-      dots[current].classList.add('done');
-      current++;
-      if (current >= CALIB_GRID.length) {
-        surface.innerHTML = '';
-        resolve(samples);
-        return;
-      }
-      nEl.textContent = String(current + 1);
-      progressEl.textContent = 'Click the dot, then hold still';
-      dots[current].style.opacity = '1';
-      dots[current].classList.add('active');
-    };
+        if (calibClicks[i] >= CLICKS_PER_DOT) {
+          // Dot complete — accent colour, disable further clicks
+          dot.classList.remove('active', 'capturing');
+          dot.classList.add('done');
+          dot.style.background    = 'var(--accent)';
+          dot.style.borderColor   = 'var(--accent)';
+          dot.style.opacity       = '1';
+          dot.style.pointerEvents = 'none';
+          dot.style.boxShadow     = '0 0 20px rgba(124,111,255,0.8)';
+          pointsDone++;
 
-    const startCapture = (i: number) => {
-      if (i !== current || capturing) return;
-      capturing = true;
-      const pos = CALIB_GRID[i];
-      const rawBuf: Array<{ x: number; y: number }> = [];
-      dots[i].classList.add('capturing');
-      progressEl.textContent = 'Holding… keep your gaze steady';
+          if (pointsDone === 8) {
+            // Reveal the center dot
+            dots[4].style.display = '';
+            progressEl.textContent = 'Now click the center dot 5 times';
+          }
 
-      const timer = setInterval(() => {
-        const raw = source.lastRaw;
-        if (raw) rawBuf.push({ x: raw.x, y: raw.y });
-      }, POLL_MS);
-
-      setTimeout(() => {
-        clearInterval(timer);
-        if (rawBuf.length >= 3) {
-          const cx = rawBuf.reduce((s, p) => s + p.x, 0) / rawBuf.length;
-          const cy = rawBuf.reduce((s, p) => s + p.y, 0) / rawBuf.length;
-          const sorted = [...rawBuf].sort(
-            (a, b) => (a.x-cx)**2 + (a.y-cy)**2 - ((b.x-cx)**2 + (b.y-cy)**2)
-          );
-          const kept = sorted.slice(0, Math.max(1, Math.floor(sorted.length * 0.8)));
-          samples.push({
-            screenX:  pos.x * window.innerWidth,
-            screenY:  pos.y * window.innerHeight,
-            rawGazeX: kept.reduce((s, p) => s + p.x, 0) / kept.length,
-            rawGazeY: kept.reduce((s, p) => s + p.y, 0) / kept.length,
-          });
+          if (pointsDone >= 9) {
+            surface.innerHTML = '';
+            if (counterEl) counterEl.style.display = '';
+            resolve();
+          }
+        } else {
+          // Ramp up opacity: 0.2 per click (0.2 → 0.4 → 0.6 → 0.8)
+          dot.style.opacity = String(0.2 * calibClicks[i] + 0.2);
+          dot.classList.add('capturing');
+          progressEl.textContent =
+            `${calibClicks[i]} / ${CLICKS_PER_DOT} on this dot — ${pointsDone} / 9 complete`;
         }
-        advance();
-      }, HOLD_MS);
-    };
-
-    dots.forEach((dot, i) => dot.addEventListener('click', () => startCapture(i)));
+      });
+    });
 
     document.getElementById('btn-skip-calib')!.addEventListener('click', () => {
       surface.innerHTML = '';
-      resolve(samples);
+      if (counterEl) counterEl.style.display = '';
+      resolve();
     }, { once: true });
   });
 }
@@ -258,7 +255,6 @@ function refreshWordTiles(engine: GazeEngine) {
 
 function handleSelect(id: string, engine: GazeEngine) {
   if (id === CTRL_UNDO) {
-    // Remove last word from composed text
     const trimmed = composedText.trimEnd();
     const lastSpace = trimmed.lastIndexOf(' ');
     composedText = lastSpace === -1 ? '' : trimmed.slice(0, lastSpace) + ' ';
@@ -292,14 +288,13 @@ function handleSelect(id: string, engine: GazeEngine) {
 
 // ── Board launcher ────────────────────────────────────────────────────────────
 
-async function startBoard(source: GazeSource, calibration?: CalibrationProfile): Promise<GazeEngine> {
+async function startBoard(source: GazeSource): Promise<GazeEngine> {
   composedText = '';
 
   const engine = new GazeEngine(
     { dwellMs: 1200, confidenceThreshold: 0.3, filterAlpha: 0.5 },
     source,
   );
-  if (calibration) engine.loadCalibrationProfile(calibration);
 
   showScreen('screen-board');
   updateDisplay();
@@ -312,7 +307,7 @@ async function startBoard(source: GazeSource, calibration?: CalibrationProfile):
   engine.onDwellProgress((id, progress) => {
     const el = document.getElementById(id);
     if (!el) return;
-    if (el.dataset.word === '' && WORD_TILE_IDS.includes(id)) return; // skip empty prediction tiles
+    if (el.dataset.word === '' && WORD_TILE_IDS.includes(id)) return;
     const fill = el.querySelector('.ring-fill') as SVGCircleElement | null;
     if (fill) fill.style.strokeDashoffset = String(CIRC * (1 - progress));
     el.classList.toggle('dwelling', progress > 0);
@@ -347,9 +342,9 @@ async function startBoard(source: GazeSource, calibration?: CalibrationProfile):
 
 // ── Button wiring ─────────────────────────────────────────────────────────────
 
-let mpSource: MediaPipeGazeSource | null = null;
+let wgSource: WebGazerGazeSource | null = null;
 
-function wireButtons(engine: GazeEngine, calibration: CalibrationProfile | undefined) {
+function wireButtons(engine: GazeEngine) {
   ['btn-back', 'btn-recalibrate'].forEach(btnId => {
     const old = document.getElementById(btnId)!;
     const fresh = old.cloneNode(true) as HTMLElement;
@@ -358,8 +353,8 @@ function wireButtons(engine: GazeEngine, calibration: CalibrationProfile | undef
 
   document.getElementById('btn-back')!.addEventListener('click', () => {
     engine.stop();
-    mpSource?.shutdown();
-    mpSource = null;
+    wgSource?.shutdown();
+    wgSource = null;
     document.getElementById('gaze-cursor')!.style.display = 'none';
     const btn = document.getElementById('btn-webcam') as HTMLButtonElement;
     btn.textContent = '📷 Start with Webcam →';
@@ -369,12 +364,12 @@ function wireButtons(engine: GazeEngine, calibration: CalibrationProfile | undef
 
   document.getElementById('btn-recalibrate')!.addEventListener('click', async () => {
     engine.stop();
-    if (!mpSource) return;
+    if (!wgSource) return;
+    wgSource.clearTrainingData();
     showScreen('screen-calibration');
-    const newSamples = await runWebcamCalibration(mpSource);
-    const newCal = newSamples.length >= 2 ? buildCalibrationProfile(newSamples) : calibration;
-    const newEngine = await startBoard(mpSource, newCal);
-    wireButtons(newEngine, newCal);
+    await runCalibration();
+    const newEngine = await startBoard(wgSource);
+    wireButtons(newEngine);
   });
 }
 
@@ -391,23 +386,21 @@ document.getElementById('btn-webcam')!.addEventListener('click', async () => {
 
   try {
     const statusEl = document.getElementById('calib-instruction');
-    mpSource = new MediaPipeGazeSource();
+    wgSource = new WebGazerGazeSource();
     showScreen('screen-calibration');
-    await mpSource.init(statusEl);
+    await wgSource.init(statusEl);
 
-    const samples = await runWebcamCalibration(mpSource);
-    const calibration = samples.length >= 2 ? buildCalibrationProfile(samples) : undefined;
-    if (!calibration) console.warn('Too few calibration samples — gaze will be uncalibrated');
+    await runCalibration();
 
-    const engine = await startBoard(mpSource, calibration);
-    wireButtons(engine, calibration);
+    const engine = await startBoard(wgSource);
+    wireButtons(engine);
 
   } catch (err) {
     console.error('Webcam init failed:', err);
     const msg = err instanceof Error ? err.message : String(err);
     setStatus(`⚠ ${msg.slice(0, 55)}`, false);
-    mpSource?.shutdown();
-    mpSource = null;
+    wgSource?.shutdown();
+    wgSource = null;
     showScreen('screen-landing');
     setTimeout(() => setStatus('📷 Start with Webcam →', false), 4000);
   }

@@ -103,7 +103,9 @@ html, body {
 .calib-counter    { font-size: 0.85rem; color: var(--accent); font-weight: 600; }
 .calib-progress   { font-size: 0.8rem; color: var(--text-muted); font-style: italic; min-height: 1.2em; }
 
-#calib-surface { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
+/* z-index 9000 keeps calibration dots above the WebGazer video container (500)
+   and above WebGazer's own prediction dot injected at z-index ~999 */
+#calib-surface { position: fixed; inset: 0; pointer-events: none; z-index: 9000; }
 
 .calib-dot {
   position: absolute;
@@ -308,36 +310,50 @@ html, body {
   box-shadow: 0 0 10px rgba(255,255,255,0.25);
 }
 
-/* ── Webcam PiP with eye-tracking overlay ────────────────────────────────── */
+/* ── WebGazer injected elements ───────────────────────────────────────────── */
+/*
+ * WebGazer 2.x injects these into <body> with inline styles. !important
+ * overrides are required. The video container goes bottom-right; our
+ * calib-surface sits above it at z-index 9000 so dots are never covered.
+ */
 
-#gazeContainer {
-  position: fixed;
-  bottom: 14px;
-  right: 14px;
-  width: 160px;
-  height: 120px;
-  border-radius: 12px;
-  overflow: hidden;
-  border: 1px solid rgba(124, 111, 255, 0.35);
-  box-shadow: 0 0 16px rgba(124, 111, 255, 0.2);
-  z-index: 500;
-  background: #000;
+#webgazerVideoContainer {
+  position: fixed !important;
+  bottom: 14px !important;
+  right: 14px !important;
+  top: auto !important;
+  left: auto !important;
+  width: 200px !important;
+  height: 150px !important;
+  border-radius: 12px !important;
+  overflow: hidden !important;
+  border: 1px solid rgba(124, 111, 255, 0.35) !important;
+  box-shadow: 0 0 16px rgba(124, 111, 255, 0.2) !important;
+  z-index: 500 !important;
 }
 
 #webgazerVideoFeed {
-  position: absolute !important;
-  inset: 0 !important;
   width: 100% !important;
   height: 100% !important;
-  object-fit: cover;
-  opacity: 0.85;
-  /* scaleX(-1) applied inline in JS to mirror the selfie view */
+  object-fit: cover !important;
+  opacity: 0.9 !important;
+  transform: scaleX(-1) !important;
 }
 
-#gazeOverlay {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
+/* Face-mesh overlay canvas rendered by WebGazer on top of the video */
+#webgazerVideoCanvas {
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  pointer-events: none !important;
+  transform: scaleX(-1) !important;
+}
+
+/* WebGazer's live prediction dot — visible during calibration,
+   hidden after start() calls showPredictionPoints(false) */
+#webgazerGazeDot {
+  z-index: 8000 !important;  /* above video (500), below our calib dots (9000) */
+  pointer-events: none !important;
 }
